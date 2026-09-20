@@ -305,7 +305,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes "${assets[@]}"
           fi
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@f7600683efdcb7656dec5b29656edb7bc586e597  # v1.10.3
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           # NOT skip-existing. On production PyPI a filename collision means the
           # version was already published -- silently tolerating that lets a tag

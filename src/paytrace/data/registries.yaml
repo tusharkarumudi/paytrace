@@ -1,0 +1,484 @@
+# Global corporate & land registry catalog
+#
+# Access tiers:
+#   api_open    - documented API, no key, machine-readable
+#   api_key     - documented API, free or paid key
+#   bulk        - downloadable bulk dataset
+#   scrape_ok   - HTML, robots.txt permits automated access
+#   manual      - captcha, session, paid-per-search, or robots-disallowed.
+#                 Catalogued for analyst reference; NEVER auto-collected.
+#
+# `automatable: false` entries exist so an analyst knows where to look by hand.
+# The collector loader refuses to fetch them. This is deliberate: the catalog's
+# value is telling you a registry exists, not pretending everything is scrapable.
+
+version: 1
+updated: 2026-08-17
+
+corporate:
+  - jurisdiction: XX
+    name: GLEIF (Global LEI Index)
+    scope: global
+    url: https://api.gleif.org/api/v1
+    access: api_open
+    automatable: true
+    collector: gleif
+    yields: [legal_name, address, jurisdiction, registration_number, parent, child]
+    notes: >-
+      Only genuinely global corporate identity source. Ownership tree is the
+      differentiator; registeredAs hands off to the national registry.
+
+  - jurisdiction: XX
+    name: OpenCorporates
+    scope: global
+    url: https://api.opencorporates.com/v0.4
+    access: api_key
+    automatable: true
+    collector: opencorporates
+    auth_env: OPENCORPORATES_API_KEY
+    yields: [legal_name, company_number, officers, status, previous_names, address]
+    licence: "Free tier for public-benefit use; commercial requires paid plan"
+    notes: >-
+      Widest jurisdictional coverage of any single API (140M+ companies).
+      Terms prohibit bulk re-publication; treat as lookup, not corpus.
+
+  - jurisdiction: XX
+    name: OpenSanctions (self-hosted yente)
+    scope: global
+    url: http://localhost:8000
+    access: api_open
+    automatable: true
+    collector: opensanctions_yente
+    yields: [sanctions, pep, offshore_leaks, aliases, lei]
+    licence: "MIT software; data licence required for commercial use"
+
+  - jurisdiction: US
+    name: SEC EDGAR
+    scope: national
+    url: https://data.sec.gov
+    access: api_open
+    automatable: true
+    collector: sec_edgar
+    yields: [cik, legal_name, former_names, address, officers, state_of_incorporation]
+    rate_limit: 10/s
+    notes: "Public filers only. Full-text endpoint undocumented and unversioned."
+
+  - jurisdiction: US-DE
+    name: Delaware Division of Corporations
+    scope: subnational
+    url: https://icis.corp.delaware.gov/ecorp/entitysearch/namesearch.aspx
+    access: manual
+    automatable: false
+    yields: [entity_name, file_number, incorporation_date, registered_agent]
+    notes: >-
+      Captcha-gated, no officer disclosure. Delaware does not publish directors
+      or beneficial owners, which is why shells register there.
+
+  - jurisdiction: US
+    name: State Secretary of State registries
+    scope: subnational
+    access: mixed
+    automatable: false
+    yields: [entity_name, registered_agent, officers, filing_history]
+    notes: >-
+      50 separate systems, no common schema. CO, OH and a handful of others
+      publish open bulk data; most are captcha-gated search forms.
+
+  - jurisdiction: GB
+    name: UK Companies House
+    scope: national
+    url: https://api.company-information.service.gov.uk
+    access: api_key
+    automatable: true
+    collector: companies_house_uk
+    auth_env: CH_API_KEY
+    yields: [company_number, officers, psc, address, filing_history, charges]
+    notes: >-
+      Best free officer + beneficial-ownership API in existence. PSC register
+      is statutory. Also offers a free bulk product snapshot.
+
+  - jurisdiction: IN
+    name: MCA21 (Ministry of Corporate Affairs)
+    scope: national
+    url: https://www.mca.gov.in/mcafoportal/companyLLPMasterData.do
+    access: manual
+    automatable: false
+    yields: [cin, din, directors, registered_address, paid_up_capital]
+    notes: >-
+      CIN -> DIN -> director cross-holdings is the strongest pivot in Indian
+      corporate work. Captcha-gated; some fields are paid-per-document.
+
+  - jurisdiction: EU
+    name: BRIS (Business Registers Interconnection System)
+    scope: supranational
+    url: https://e-justice.europa.eu/489/EN/business_registers__search_for_a_company_in_the_eu
+    access: manual
+    automatable: false
+    yields: [company_number, legal_name, address, legal_form]
+    notes: "Federated portal over member-state registers. No public API."
+
+  - jurisdiction: DE
+    name: Unternehmensregister / Handelsregister
+    scope: national
+    url: https://www.unternehmensregister.de
+    access: manual
+    automatable: false
+    yields: [hrb_number, managing_directors, share_capital, annual_accounts]
+    notes: >-
+      Pair with the imprint collector: §5 TMG forces the HRB number onto the
+      website itself, which is usually faster than searching the registry.
+
+  - jurisdiction: FR
+    name: INPI RNE / data.gouv.fr
+    scope: national
+    url: https://data.inpi.fr
+    access: bulk
+    automatable: true
+    yields: [siren, siret, legal_name, officers, address]
+    notes: "Open bulk data since 2023. SIREN is the join key across French sources."
+
+  - jurisdiction: NL
+    name: KVK (Kamer van Koophandel)
+    scope: national
+    url: https://developers.kvk.nl
+    access: api_key
+    automatable: true
+    auth_env: KVK_API_KEY
+    yields: [kvk_number, trade_names, address, sbi_codes]
+
+  - jurisdiction: SG
+    name: ACRA BizFile / data.gov.sg
+    scope: national
+    url: https://data.gov.sg
+    access: api_key
+    automatable: true
+    auth_env: DATA_GOV_SG_KEY
+    yields: [uen, entity_name, status, address]
+
+  - jurisdiction: AU
+    name: ASIC Connect / ABN Lookup
+    scope: national
+    url: https://abr.business.gov.au/json
+    access: api_key
+    automatable: true
+    auth_env: ABN_LOOKUP_GUID
+    yields: [abn, acn, entity_name, trading_names, state, status]
+    notes: "ABN Lookup is free with a registration GUID. ASIC extracts are paid."
+
+  - jurisdiction: CA
+    name: Open Corporate Registry (federal + provincial)
+    scope: national
+    url: https://searchapi.mrasservice.ca/Search/api/v1/search
+    access: api_open
+    automatable: true
+    yields: [corporation_number, legal_name, jurisdiction, status]
+
+  - jurisdiction: NZ
+    name: NZ Companies Office
+    scope: national
+    url: https://api.business.govt.nz
+    access: api_key
+    automatable: true
+    auth_env: NZBN_API_KEY
+    yields: [company_number, directors, shareholders, address]
+    notes: "Publishes shareholders, which is rare. Strong for ownership tracing."
+
+  - jurisdiction: HK
+    name: Companies Registry ICRIS
+    scope: national
+    access: manual
+    automatable: false
+    yields: [cr_number, directors, address]
+    notes: "Paid-per-search. Directors were briefly restricted then partly restored."
+
+  - jurisdiction: KY
+    name: Cayman Islands General Registry
+    scope: national
+    access: manual
+    automatable: false
+    notes: "No public beneficial ownership. Usually a terminal node."
+
+  - jurisdiction: BVI
+    name: BVI Financial Services Commission
+    scope: national
+    access: manual
+    automatable: false
+    notes: "Same as Cayman. ICIJ OffshoreLeaks via yente is often more productive."
+
+  - jurisdiction: XX
+    name: ICIJ Offshore Leaks
+    scope: global
+    url: https://offshoreleaks.icij.org
+    access: bulk
+    automatable: true
+    collector: opensanctions_yente
+    yields: [entity, officer, intermediary, address, jurisdiction]
+    notes: "Load as a FollowTheMoney dataset into yente rather than scraping."
+
+  - jurisdiction: XX
+    name: Open Ownership Register
+    scope: global
+    url: https://register.openownership.org
+    access: bulk
+    automatable: true
+    yields: [beneficial_owner, ownership_chain, statement_provenance]
+    notes: "BODS-format beneficial ownership. Best cross-jurisdiction BO source."
+
+  # ---------------------------------------------------------------------------
+  # Federated jurisdictions
+  #
+  # Some countries have no single company register. The UAE is the clearest case:
+  # seven emirate authorities plus more than forty free zones, each maintaining
+  # its own list, with no unified search. An entity registered in DMCC is absent
+  # from ADGM, from DIFC and from every emirate DED by construction.
+  #
+  # `federation_of` marks these. A run that checks one of them and reports
+  # "not found in the UAE" is producing a confident false negative, and the
+  # coverage report says so.
+  # ---------------------------------------------------------------------------
+
+  - jurisdiction: AE
+    name: UAE — no unified national register
+    category: corporate
+    scope: placeholder
+    url: ""
+    access: manual
+    automatable: false
+    yields: []
+    notes: >
+      There is no national UAE company register. Coverage requires querying each
+      emirate authority and each relevant free zone separately. Absence from any
+      one of them means nothing on its own. This entry exists so a coverage
+      report cannot imply a national search happened.
+
+  - jurisdiction: AE-DU
+    name: Dubai DED (Department of Economy and Tourism)
+    category: corporate
+    scope: Dubai mainland companies
+    url: https://eservices.dubaided.gov.ae
+    access: manual
+    automatable: false
+    federation_of: AE
+    requires_local_egress: true
+    language: ar/en
+    yields: [trade_licence_number, legal_name, activity, status]
+    notes: >
+      Mainland Dubai only. Trade-licence lookup requires the licence number;
+      there is no open name search. Free-zone entities do not appear here.
+
+  - jurisdiction: AE-AZ
+    name: Abu Dhabi ADDED
+    category: corporate
+    scope: Abu Dhabi mainland companies
+    url: https://added.gov.ae
+    access: manual
+    automatable: false
+    federation_of: AE
+    requires_local_egress: true
+    language: ar/en
+    yields: [trade_licence_number, legal_name, activity]
+
+  - jurisdiction: AE-DIFC
+    name: DIFC Public Register
+    category: corporate
+    scope: Dubai International Financial Centre entities
+    url: https://www.difc.ae/public-register
+    access: manual
+    automatable: false
+    federation_of: AE
+    yields: [registration_number, legal_name, status, registered_address]
+    notes: >
+      Common-law free zone with its own courts. Name search works and is one of
+      the better UAE registers, but covers DIFC entities only.
+
+  - jurisdiction: AE-ADGM
+    name: ADGM Public Register
+    category: corporate
+    scope: Abu Dhabi Global Market entities
+    url: https://www.adgm.com/public-registry
+    access: manual
+    automatable: false
+    federation_of: AE
+    yields: [registration_number, legal_name, status, registered_address]
+    notes: Common-law free zone. Name search available; ADGM entities only.
+
+  - jurisdiction: AE-DMCC
+    name: DMCC Member Directory
+    category: corporate
+    scope: Dubai Multi Commodities Centre members
+    url: https://www.dmcc.ae/members
+    access: manual
+    automatable: false
+    federation_of: AE
+    yields: [legal_name, activity]
+    notes: >
+      A member directory rather than a statutory register: it lists companies
+      that opted into being listed. Absence proves nothing at all.
+
+  - jurisdiction: AE-JAFZA
+    name: JAFZA / DP World free zone
+    category: corporate
+    scope: Jebel Ali Free Zone entities
+    url: https://www.jafza.ae
+    access: manual
+    automatable: false
+    federation_of: AE
+    yields: [legal_name]
+    notes: No public entity search. Enquiries go through the authority.
+
+  - jurisdiction: AE-RAK
+    name: RAKEZ / RAK ICC
+    category: corporate
+    scope: Ras Al Khaimah free zone and international companies
+    url: https://rakez.com
+    access: manual
+    automatable: false
+    federation_of: AE
+    yields: [legal_name]
+    notes: >
+      RAK ICC offshore companies are deliberately opaque; no public register of
+      shareholders or directors.
+
+  # --- other jurisdictions where egress or language is the binding constraint ---
+
+  - jurisdiction: SA
+    name: Saudi Ministry of Commerce — Commercial Register
+    category: corporate
+    scope: Saudi commercial registrations
+    url: https://mc.gov.sa
+    access: manual
+    automatable: false
+    requires_local_egress: true
+    language: ar
+    yields: [cr_number, legal_name, status]
+    notes: Arabic interface; some services require Absher authentication.
+
+  - jurisdiction: QA
+    name: Qatar Ministry of Commerce and Industry
+    category: corporate
+    scope: Qatari commercial registrations
+    url: https://www.moci.gov.qa
+    access: manual
+    automatable: false
+    language: ar/en
+    yields: [cr_number, legal_name]
+
+  - jurisdiction: SG
+    name: ACRA BizFile+
+    category: corporate
+    scope: Singapore entities
+    url: https://www.bizfile.gov.sg
+    access: manual
+    automatable: false
+    yields: [uen, entity_name, status, registered_address]
+    notes: Free name search; officer and shareholder detail is a paid extract.
+
+  - jurisdiction: NL
+    name: KVK Handelsregister
+    category: corporate
+    scope: Netherlands entities
+    url: https://www.kvk.nl/zoeken
+    access: api_key
+    automatable: false
+    language: nl
+    yields: [kvk_number, trade_names, address]
+
+  - jurisdiction: FR
+    name: INPI RNE
+    category: corporate
+    scope: French entities
+    url: https://data.inpi.fr
+    access: api_key
+    automatable: false
+    language: fr
+    yields: [siren, siret, legal_name, officers]
+
+  - jurisdiction: AU
+    name: ABN Lookup / ASIC
+    category: corporate
+    scope: Australian entities
+    url: https://abr.business.gov.au
+    access: api_key
+    automatable: false
+    yields: [abn, acn, entity_name, status]
+
+  - jurisdiction: US
+    name: County assessor & recorder offices
+    scope: subnational
+    access: mixed
+    automatable: false
+    yields: [parcel_id, owner_of_record, deed_history, assessed_value]
+    notes: >-
+      ~3,100 counties, no common schema or API. A minority publish open parcel
+      data (LA County, Cook County, King County, NYC ACRIS). The rest are
+      captcha-gated or vendor-hosted. Owner-of-record is frequently an LLC,
+      which is the useful case; where it is a natural person the record is a
+      home address, which is why this module is entity-keyed only.
+
+  - jurisdiction: US-NY
+    name: NYC ACRIS
+    scope: subnational
+    url: https://data.cityofnewyork.us/resource/bnx9-e6tj.json
+    access: api_open
+    automatable: true
+    collector: nyc_acris
+    yields: [document_id, party_name, party_type, doc_type, recorded_date]
+    notes: "Socrata API. Party names include LLCs; strong for real-estate shells."
+
+  - jurisdiction: GB
+    name: HM Land Registry - Overseas companies that own property
+    scope: national
+    url: https://use-land-property-data.service.gov.uk
+    access: bulk
+    automatable: true
+    collector: uk_overseas_property
+    yields: [title_number, proprietor_name, proprietor_country, price_paid]
+    notes: >-
+      Open dataset of UK property held by overseas companies. Corporate-only by
+      construction, which makes it the cleanest asset-tracing source available.
+
+  - jurisdiction: GB
+    name: Register of Overseas Entities
+    scope: national
+    url: https://api.company-information.service.gov.uk
+    access: api_key
+    automatable: true
+    auth_env: CH_API_KEY
+    yields: [oe_number, beneficial_owners, managing_officers]
+
+  - jurisdiction: IN
+    name: State land record portals (Dharani, Bhulekh, Maha Bhumi)
+    scope: subnational
+    access: manual
+    automatable: false
+    notes: >-
+      Per-state systems, mostly survey-number keyed rather than name keyed.
+      Telangana Dharani and Maharashtra Mahabhumi are the most developed.
+
+intellectual_property:
+  - jurisdiction: US
+    name: USPTO Trademark (TSDR / Open Data Portal)
+    scope: national
+    url: https://developer.uspto.gov
+    access: api_key
+    automatable: true
+    auth_env: USPTO_API_KEY
+    collector: uspto_trademark
+    yields: [serial_number, owner_name, owner_address, mark, filing_date]
+    notes: "Brand -> owning entity. Underused and very high selectivity."
+
+  - jurisdiction: EU
+    name: EUIPO
+    scope: supranational
+    url: https://euipo.europa.eu/ohimportal/en/web/guest/api
+    access: api_key
+    automatable: true
+    auth_env: EUIPO_API_KEY
+    yields: [application_number, owner, mark, representative]
+
+  - jurisdiction: XX
+    name: WIPO Global Brand Database
+    scope: global
+    url: https://branddb.wipo.int
+    access: manual
+    automatable: false

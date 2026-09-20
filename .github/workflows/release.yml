@@ -1,0 +1,315 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write        # OIDC token for keyless Sigstore signing
+
+jobs:
+
+  gate:
+    # Publication must depend on a real check. The release job previously had
+    # no `needs`, so a tag published wheels whether or not anything passed --
+    # the CI workflow ran in parallel and its result was never consulted.
+    name: Release gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with: { python-version: "3.12" }
+      - name: Install
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          pip install -e . ruff bandit pytest pytest-asyncio build twine
+      - name: Tag matches packaged version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $tag does not match packaged version $pkg."
+            echo "::error::Exact match is required so a tag can never publish"
+            echo "::error::a different version than it names. To rehearse,"
+            echo "::error::set version = \"$tag\" in pyproject.toml, commit,"
+            echo "::error::then tag. PEP 440 pre-releases look like 2.0.0rc1"
+            echo "::error::(no hyphen) -- v2.0.0-rc1 is not a valid form here."
+            exit 1
+          fi
+      - name: Lint, security, tests
+        run: |
+          set -euo pipefail
+          ruff check .
+          bandit -r src -ll -q
+          pytest -q
+      - name: LICENSE is real
+        run: |
+          set -euo pipefail
+          grep -q PLACEHOLDER LICENSE && { echo "::error::placeholder LICENSE"; exit 1; }
+          grep -q "Apache License" LICENSE
+      - name: Dependency CVEs in the released closure
+        # The main-branch security job audits main; a tag resolves its own
+        # dependency set, and the pins are lower bounds (httpx>=0.27), so the
+        # set that ships can differ from the one that was tested. Audit what is
+        # actually being released, and fail the tag rather than the users.
+        run: |
+          set -euo pipefail
+          pip install -q pip-audit
+          # Third-party closure only, in a clean venv. `pip-audit --strict`
+          # over the gate environment always failed: this package is installed
+          # editable and is not on PyPI, and --strict treats "could not be
+          # audited" as an error.
+          python -m venv /tmp/auditenv
+          python - > /tmp/thirdparty.txt <<'PY'
+          import pathlib, re, tomllib
+
+          # Walk this package AND any sibling checkouts. attribution-suite
+          # declares only internal dependencies, so looking at its own
+          # pyproject alone produced an EMPTY closure -- an audit that checked
+          # nothing and reported "no known vulnerabilities". Its real
+          # third-party surface (httpx, pyyaml) arrives through the siblings.
+          ours = {"attribution-graph", "paytrace", "handle-correlation",
+                  "attribution-suite"}
+          roots = [pathlib.Path("pyproject.toml")]
+          roots += [pathlib.Path("..") / name / "pyproject.toml"
+                    for name in sorted(ours)]
+
+          seen = set()
+          for root in roots:
+              if not root.exists():
+                  continue
+              data = tomllib.loads(root.read_text())
+              project = data.get("project", {})
+              specs = list(project.get("dependencies", []))
+              for extra in (project.get("optional-dependencies") or {}).values():
+                  specs += extra
+              for dep in specs:
+                  name = re.split(r"[<>=!\[ ;]", dep)[0].strip().lower()
+                  if name and name not in ours and dep not in seen:
+                      seen.add(dep)
+                      print(dep)
+          PY
+          if [ -s /tmp/thirdparty.txt ]; then
+            /tmp/auditenv/bin/pip install -q -r /tmp/thirdparty.txt
+          fi
+          /tmp/auditenv/bin/pip freeze --exclude-editable > /tmp/closure.txt
+          python -m venv /tmp/audittool
+          /tmp/audittool/bin/pip install -q pip-audit
+          /tmp/audittool/bin/pip-audit --strict --desc -r /tmp/closure.txt
+
+      - name: Build and verify artifacts
+        run: |
+          set -euo pipefail
+          python -m build
+          twine check dist/*
+      - name: Artifact installs and imports
+        # A wheel that builds is not a wheel that works: package data can be
+        # missing and every local test still passes.
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install -q dist/*.whl
+          cd /tmp && /tmp/smoke/bin/python -c "import paytrace"
+      - name: Upload the gated distributions
+        # The artifact that passed the gate is the artifact that gets signed
+        # and published. The release job used to check out and `python -m build`
+        # again, which discards the strongest release invariant --
+        # tested == signed == published -- and bypasses the clean-install gate
+        # entirely. PyPI's Trusted Publishing guidance says the publishing job
+        # should retrieve distributions from a separate build job.
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: dist-${{ github.ref_name }}
+          path: |
+            dist/
+            runtime-requirements.txt
+          if-no-files-found: error
+
+  release:
+    needs: gate
+    # Declared here AND registered on PyPI. Trusted Publishing matches on
+    # owner + repository + workflow filename + environment; configuring the
+    # environment on PyPI while the workflow omits it fails at upload with a
+    # generic authorization error and no indication of which field mismatched.
+    permissions:
+      # Explicit rather than inherited: a job that inherits workflow-level
+      # permissions is one refactor away from losing them silently, and the
+      # failure mode is an OIDC rejection at publish time.
+      contents: write        # attach artifacts to the GitHub Release
+      id-token: write        # OIDC token for PyPI Trusted Publishing
+    environment:
+      name: pypi
+      url: https://pypi.org/p/${{ github.event.repository.name }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the gated distributions
+        # Exactly the files the gate built, checked and installed. No rebuild.
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          name: dist-${{ github.ref_name }}
+          path: |
+            dist/
+            runtime-requirements.txt
+      - name: Confirm the artifact set is non-empty
+        run: |
+          set -euo pipefail
+          ls -l dist/
+          test -n "$(ls dist/*.whl)" && test -n "$(ls dist/*.tar.gz)"
+          # OUTSIDE dist/. The publish action runs `twine upload <dir>/*`, so
+          # a checksum file inside dist/ is handed to twine alongside the wheel
+          # and sdist. Non-distribution files there are unsupported.
+          sha256sum dist/* > SHA256SUMS
+          [ -f sbom.cyclonedx.json ] && sha256sum sbom.cyclonedx.json >> SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Tag matches the artifact being published
+        # Checks the DOWNLOADED wheel, not a source file: the release job no
+        # longer checks out source, and this is the stronger assertion anyway
+        # -- it verifies the artifact about to be signed carries the tagged
+        # version, rather than that a repository file did at build time.
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          for w in dist/*.whl; do
+            ver=$(basename "$w" | cut -d- -f2)
+            if [ "$ver" != "$tag" ]; then
+              echo "::error::tag $tag does not match artifact version $ver ($w)"
+              exit 1
+            fi
+          done
+          echo "tag $tag matches every downloaded artifact"
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with: { python-version: "3.12" }
+
+
+      # CycloneDX SBOM. For a security tool aimed at security teams, shipping
+      # without one is an easy thing to be criticised for.
+      - name: SBOM
+        # Two environments, deliberately. The generator used to be installed
+        # alongside the released wheel and then asked to inventory that
+        # environment, so cyclonedx-bom and its own dependency closure appeared
+        # in the product SBOM. A syntactically valid SBOM describing the wrong
+        # closure is worse than none, because it is trusted.
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/product          # released wheel only
+          /tmp/product/bin/pip install -q dist/*.whl
+          python -m venv /tmp/sbomtool         # generator only
+          /tmp/sbomtool/bin/pip install -q cyclonedx-bom
+          /tmp/sbomtool/bin/cyclonedx-py environment /tmp/product \
+            --output-format json --outfile sbom.cyclonedx.json
+
+          # The RUNTIME closure: what a user actually installs, resolved from
+          # the built wheel in a clean environment. `pip freeze` in the gate
+          # described the development environment and was labelled "released
+          # closure", which is the wrong artifact under a reassuring name.
+          /tmp/product/bin/pip freeze > runtime-requirements.txt
+
+          # Audit the third-party half. runtime-requirements.txt is the full
+          # record and is published as-is, but the packages in THIS suite are
+          # not on PyPI during their own first release, and pip-audit --strict
+          # treats an unresolvable package as an error -- so auditing the whole
+          # file would fail every initial release for a reason unrelated to
+          # vulnerabilities.
+          grep -viE '^(attribution-graph|paytrace|handle-correlation|attribution-suite)==' \
+            runtime-requirements.txt > /tmp/runtime-thirdparty.txt || true
+          echo "auditing $(wc -l < /tmp/runtime-thirdparty.txt) third-party packages"
+          /tmp/sbomtool/bin/pip install -q pip-audit
+          /tmp/sbomtool/bin/pip-audit --strict --desc \
+            -r /tmp/runtime-thirdparty.txt
+          python - <<'PY'
+          import json, sys
+          doc = json.load(open("sbom.cyclonedx.json"))
+          names = {c.get("name", "").lower() for c in doc.get("components", [])}
+          leaked = names & {"cyclonedx-bom", "cyclonedx-python-lib", "ruff",
+                            "pytest", "build", "twine", "bandit"}
+          if leaked:
+              sys.exit(f"::error::SBOM contains tooling, not product: {leaked}")
+          print(f"SBOM: {len(names)} components, product closure only")
+          PY
+
+      # Keyless signing via OIDC: no long-lived key to leak or rotate. The
+      # signing identity is the GitHub workflow itself, recorded in the public
+      # Rekor transparency log and verifiable by anyone.
+      - name: Sign artifacts
+        # `sigstore` the Python package, not the GitHub Action.
+        #
+        # With "require actions pinned to a full-length commit SHA" enabled,
+        # the policy applies to NESTED references: gh-action-sigstore-python
+        # calls actions/upload-artifact@v4 internally without SHA-pinning it,
+        # so the whole workflow is refused. Pinning our own reference cannot fix
+        # a reference inside someone else's action.
+        #
+        # The CLI produces identical Sigstore bundles and uses the same ambient
+        # OIDC credential this job already holds for Trusted Publishing, so this
+        # removes a third-party action from the signing trust boundary rather
+        # than weakening the policy to accommodate it.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          python -m pip install -q sigstore
+          targets=(dist/*.tar.gz dist/*.whl sbom.cyclonedx.json)
+          echo "signing ${#targets[@]} artifact(s)"
+          python -m sigstore sign --overwrite "${targets[@]}"
+          # Verify what we just produced: a signature nobody checks is a file.
+          for f in "${targets[@]}"; do
+            python -m sigstore verify identity \
+              --cert-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+              --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$f"
+          done
+          ls -1 *.sigstore.json dist/*.sigstore.json 2>/dev/null || true
+
+      - name: Checksums
+        run: |
+          # OUTSIDE dist/. The publish action runs `twine upload <dir>/*`, so
+          # anything in dist/ that is not a distribution is handed to twine
+          # alongside the wheel and sdist, which upstream treats as unsupported.
+          sha256sum dist/* > SHA256SUMS
+          [ -f sbom.cyclonedx.json ] && sha256sum sbom.cyclonedx.json >> SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish release
+        # `gh release create` rather than a third-party action.
+        #
+        # With "require actions pinned to a full-length commit SHA" enabled at
+        # the repository level, the policy applies to NESTED references too:
+        # softprops/action-gh-release internally calls
+        # actions/upload-artifact@v4, which it does not SHA-pin, so the whole
+        # workflow was refused. Pinning our own reference cannot fix a
+        # reference inside someone else's action.
+        #
+        # gh is preinstalled on the runner, so this removes a third-party
+        # action from the trust boundary for signing and publishing rather than
+        # weakening the policy to accommodate it.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/* SHA256SUMS runtime-requirements.txt sbom.cyclonedx.json *.sigstore.json)
+          echo "attaching ${#assets[@]} asset(s)"
+          # Idempotent: a re-run after a partial failure finds the release
+          # already there, and `create` would abort on it.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release exists; uploading assets"
+            gh release upload "$GITHUB_REF_NAME" --clobber "${assets[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes "${assets[@]}"
+          fi
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@f7600683efdcb7656dec5b29656edb7bc586e597  # v1.10.3
+        with:
+          # NOT skip-existing. On production PyPI a filename collision means the
+          # version was already published -- silently tolerating that lets a tag
+          # "succeed" while shipping nothing, which breaks the invariant that
+          # the artifact the gate produced is the artifact users receive.
+          # Failing loudly is the point: bump the version and tag again.
+          attestations: true

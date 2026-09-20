@@ -1,0 +1,9 @@
+build: 20260920-034606
+version: 2.0.0
+tests: 1175
+
+This file identifies which build of the archive is on disk. Compare it against
+what you pushed when CI shows a step you do not recognise -- a workflow that
+runs a command absent from your source means GitHub has an older commit.
+
+    git log -1 --format=%H -- .github/workflows/ci.yml

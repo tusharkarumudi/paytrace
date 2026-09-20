@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+title: "paytrace: ad-tech supply-chain collectors for entity attribution"
+message: "If you use this software or the method it implements, please cite it."
+type: software
+authors:
+  - family-names: Karumudi
+    # Add your ORCID before release; it makes the work
+    # machine-linkable to you across citation systems.
+    # orcid: "https://orcid.org/0000-0000-0000-0000"
+    given-names: Tushar
+repository-code: "https://github.com/tusharkarumudi/paytrace"
+abstract: >-
+  Collectors and a reverse ads.txt/sellers.json index for attributing websites
+  to the legal entities paid for their advertising inventory. Chains IAB ads.txt
+  v1.1 and sellers.json declarations to statutory corporate registries (GLEIF,
+  SEC EDGAR, UK Companies House) and to infrastructure sources (RDAP,
+  Certificate Transparency, passive DNS), using only free and keyless endpoints.
+  The reverse index doubles as the selectivity corpus required to calibrate
+  attribution-graph confidence scores.
+keywords:
+  - ads.txt
+  - sellers.json
+  - ad fraud
+  - open source intelligence
+  - attribution
+  - corporate registries
+license: Apache-2.0
+version: 2.0.0

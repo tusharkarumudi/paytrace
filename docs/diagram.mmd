@@ -1,0 +1,37 @@
+flowchart TB
+  S["STAGE 0 - SCOPE GATE<br/>case.yaml: authorization, pivot_radius,<br/>entity types, retention, source allowlist"]
+  I["STAGE 1 - INPUT<br/>domain | org_name | email | handle<br/>seller_id | LEI | CIK | ASN"]
+
+  subgraph C["STAGE 2 - COLLECTORS"]
+    direction LR
+    C1["INFRA<br/>rdap, crt.sh, internetdb<br/>mnemonic pdns, favicon mmh3"]
+    C2["BUSINESS<br/>ads.txt OWNERDOMAIN, sellers.json<br/>GLEIF, EDGAR, Companies House<br/>imprint, yente"]
+    C3["PERSONA<br/>gravatar, github_intel<br/>username_expand, pgp, holehe"]
+  end
+
+  K["STAGE 3 - CLAIMS<br/>(subject, predicate, object,<br/>source, method, observed_at,<br/>reliability, correlation_group)"]
+
+  subgraph P["STAGE 4 - PIVOT"]
+    direction LR
+    P1["seller_id -> legal entity"]
+    P2["org_name -> LEI -> parent tree"]
+    P3["company_number -> officers, PSC"]
+    P4["email -> gravatar -> handle"]
+    P5["handle -> keys, commit emails, tz"]
+  end
+
+  F["STAGE 5 - FILTER<br/>role accounts | privacy proxies<br/>nominee agents | shared infra<br/>DROP vs DEMOTE"]
+  R["STAGE 5b - RESOLUTION<br/>LLR = reliability x decay x log(1/selectivity)<br/>group as max + log(1+n), never sum<br/>weighted union-find, must-not-link"]
+  L["STAGE 6 - LOOP<br/>enqueue by priority P1..P5<br/>capped by radius + budget"]
+  O["STAGE 7 - OUTPUT<br/>investigation_graph.json<br/>entities.ftm.json | graph.cypher<br/>attribution_report.md (ICD 203)<br/>audit.jsonl"]
+
+  S --> I --> C --> K --> P --> F
+  F -->|KEEP| R
+  F -->|DEMOTE weight=0| R
+  F -->|DROP| X["discarded, logged"]
+  R --> L
+  L -->|new frontier| C
+  L -->|frontier empty| O
+
+  D["DENIED SOURCE CLASSES<br/>data brokers | breach corpora<br/>authenticated scrape | biometric<br/>location brokers<br/>--- enforced at collector load ---"]
+  D -.blocks.-> C

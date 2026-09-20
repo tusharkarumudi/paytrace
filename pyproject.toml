@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "paytrace"
+version = "2.0.0"
+description = "Trace a website to the legal entity that gets paid for it"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Tushar Karumudi" }]
+keywords = ["ads.txt", "sellers.json", "osint", "attribution", "ad-fraud",
+            "made-for-advertising", "threat-intelligence", "gleif", "edgar"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Information Technology",
+  "Topic :: Security",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = ["attribution-graph==2.0.*", "httpx>=0.27", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+favicon = ["mmh3>=4.1"]
+persona = ["pgpy>=0.6"]   # plus optional CLI tools: holehe, xeuledoc
+agent = ["anthropic>=0.40"]   # only for --brain llm; the demo runs without it
+all = ["mmh3>=4.1", "pgpy>=0.6", "anthropic>=0.40"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+# Explicit taxonomy. A developer should not need implicit environmental
+# knowledge to make `pytest` green: network and browser tests fail on a
+# machine without DNS or Chromium, and that is an environment fact rather
+# than a defect.
+#
+#   pytest                      # deterministic subset, the release gate
+#   pytest -m network           # needs outbound DNS/HTTP
+#   pytest -m browser           # needs a headless browser
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "network: requires outbound network access",
+    "browser: requires a headless browser (playwright/chromium)",
+    "integration: spans more than one package",
+    "adversarial: injection, obfuscation and SSRF regressions",
+    "slow: takes more than a second",
+]
+addopts = "-m 'not network and not browser'"
+
+[project.scripts]
+paytrace = "paytrace.cli:_cli"
+paytrace-index = "paytrace.index:_main"
+
+[project.urls]
+Homepage = "https://github.com/tusharkarumudi/paytrace"
+Issues = "https://github.com/tusharkarumudi/paytrace/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/paytrace"]
+# data/ lives inside the package, so packages= already includes it.
+# A force-include here duplicates the path and fails the wheel build.
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "tests/", "examples/", "demo/", "*.md", "LICENSE", "CITATION.cff"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["B008", "UP017"]  # UP017: timezone.utc reads clearer than the UTC alias
+

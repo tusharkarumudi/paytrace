@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Pre-commit guard against committing investigation artifacts.
+#
+#   ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+#
+# .gitignore prevents accidents. This catches the deliberate ones -- a
+# `git add -f`, a path the ignore rules missed, or a file whose name looks
+# innocuous but whose contents are not.
+
+set -euo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+fail=0
+flag() { echo "BLOCKED: $1" >&2; echo "         $2" >&2; fail=1; }
+
+# --- filename patterns ----------------------------------------------------- #
+while IFS= read -r f; do
+  case "$f" in
+    */evidence/*|evidence/*|*/captures/*|captures/*)
+      flag "$f" "evidence package: preserved bytes from a live target" ;;
+    audit*.jsonl|*/audit*.jsonl)
+      flag "$f" "audit log: contains investigated identifiers" ;;
+    case.yaml|case-*.yaml|case_*.yaml|*/case.yaml)
+      flag "$f" "case file: contains the authorization reference" ;;
+    *.sqlite|*.sqlite3|*.db)
+      case "$f" in tests/*|*/tests/*) : ;;
+        *) flag "$f" "corpus index: contains crawl data" ;; esac ;;
+    investigation_graph*.json|entities.ftm.json|attribution_report.*|\
+    verification_trail.*|portfolio.json|handle_graph.json|assessments.json)
+      flag "$f" "run output: contains investigated identifiers" ;;
+    *blacklist*.txt)
+      case "$f" in tests/*|*/tests/*) : ;;
+        *) flag "$f" "operational blocklist: data, not method" ;; esac ;;
+    .env|.pypirc|*.pem|*.key)
+      flag "$f" "credential material" ;;
+    labelled_pairs.json|pairs.json|train.json|test.json)
+      flag "$f" "calibration corpus: derived from closed cases" ;;
+  esac
+done <<< "$staged"
+
+# --- content patterns ------------------------------------------------------ #
+# Catches an artifact renamed to something innocuous.
+for f in $staged; do
+  [ -f "$f" ] || continue
+  case "$f" in *.png|*.jpg|*.pdf|*.gz|*.sqlite) continue ;; esac
+
+  if grep -qE '"(authorization|body_sha256|manifest_hash)":' "$f" 2>/dev/null; then
+    flag "$f" "looks like an evidence manifest or case export"
+  fi
+  if grep -qiE '(ANTHROPIC|GITHUB|CH|OPENCORPORATES|USPTO)_API_KEY[[:space:]]*=[[:space:]]*[A-Za-z0-9_-]{16,}' "$f" 2>/dev/null; then
+    flag "$f" "hardcoded API key"
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  cat >&2 <<'MSG'
+
+Investigation artifacts must not enter git history. Once committed they are
+in every clone and fork permanently.
+
+If this is genuinely a fixture or example, put it under tests/ or examples/
+with synthetic data. If you are certain, bypass with:
+
+    git commit --no-verify
+
+MSG
+  exit 1
+fi
+exit 0

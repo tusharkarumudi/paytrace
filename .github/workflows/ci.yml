@@ -1,0 +1,227 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with: { python-version: "${{ matrix.python-version }}" }
+      - name: Check out sibling packages
+        # BEFORE any install. The dependent packages declare
+        # attribution-graph>=2.0.0, which is not on PyPI until the first
+        # release, so `pip install -e .` cannot resolve on a first public CI
+        # run. Cloning siblings first lets the install resolve locally.
+        #
+        # Cloning is best-effort per repo: on the very first push the sibling
+        # repositories may not exist yet, and a first CI run should not be red
+        # for that reason alone. The integration step below still fails hard if
+        # they are genuinely required and missing.
+        run: |
+          set -uo pipefail
+          for repo in attribution-graph paytrace handle-correlation attribution-suite; do
+            [ "$repo" = "${GITHUB_REPOSITORY##*/}" ] && continue
+            [ -d "../$repo" ] && continue
+            git clone --depth 1 \
+              "https://github.com/${GITHUB_REPOSITORY%%/*}/$repo.git" "../$repo" \
+              || {
+                   echo "::warning::sibling $repo not available yet"
+                   echo -n "$repo " >> /tmp/siblings-missing
+                 }
+          done
+
+      - name: Install
+        # Siblings first when present, so local sources satisfy the pins.
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          for repo in attribution-graph paytrace handle-correlation; do
+            [ -d "../$repo" ] && pip install -e "../$repo"
+          done
+          pip install -e ".[dev]"
+
+      - run: ruff check .
+      - run: pytest -q
+      - name: Integration tests (cross-package)
+        # Skips only when a sibling repository does not exist yet, which is the
+        # real state during a first push: the four repos are created in order,
+        # so requiring all of them made every repo's CI red until the last one
+        # existed. A sibling that EXISTS but failed to check out is still a
+        # hard failure -- that is a defect, not a bootstrap.
+        run: |
+          set -euo pipefail
+          if [ -d ../attribution-suite ]; then
+            pip install -e ../attribution-graph -e ../paytrace \
+                        -e ../handle-correlation -e ../attribution-suite
+            pytest -q ../attribution-suite/tests/test_integration.py
+          elif [ -f /tmp/siblings-missing ]; then
+            echo "::warning::skipping cross-package integration: $(cat /tmp/siblings-missing)"
+            echo "::warning::this is expected only while the repositories are"
+            echo "::warning::first being created. Re-run once all four exist."
+          else
+            echo "::error::attribution-suite is absent and no bootstrap marker"
+            echo "::error::was written, so the checkout failed rather than the"
+            echo "::error::repository being missing."
+            exit 1
+          fi
+      - name: Adversarial suite (injection + obfuscation)
+        run: pytest -q -k "obfuscation or injection or security or adversarial or guard"
+      - name: Adversarial traces are current
+        # Committed traces are documentation that executes. One that no longer
+        # matches behaviour documents a system that does not exist.
+        run: |
+          set -euo pipefail
+          python adversarial/capture_traces.py --check
+
+      - name: Run examples
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in examples/*.py; do
+            echo "running $f"
+            python "$f" > /dev/null
+          done
+
+  artifact-guard:
+    name: No investigation artifacts committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Check tracked files
+        run: |
+          # Investigation artifacts must never enter git history. .gitignore
+          # prevents accidents; this catches a `git add -f` or a rule gap.
+          bad=$(git ls-files | grep -iE             "(^|/)(evidence|captures)/|^audit.*\.jsonl$|^case\.yaml$|\.sqlite$|\.env$|^\.pypirc$|investigation_graph.*\.json$|^(attribution_report|verification_trail)\.|blacklist.*\.txt$"             | grep -v "^tests/" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::investigation artifacts are tracked in git:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "clean"
+      - name: Check .gitignore covers the artifact classes
+        run: |
+          for p in out/ evidence/ captures/ case.yaml audit.jsonl foo.sqlite .env; do
+            git check-ignore -q "$p" || { echo "::error::.gitignore misses $p"; exit 1; }
+          done
+          echo "gitignore ok"
+
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with: { python-version: "3.12" }
+      - run: pip install bandit pip-audit
+      - name: Static analysis
+        run: bandit -r src -ll -q
+      - name: Check out sibling packages
+        # Same bootstrap as the test job. This job installs the package too, and
+        # the dependent packages pin attribution-graph>=2.0.0 -- not on PyPI
+        # until the first release -- so the install below cannot resolve on a
+        # first public run. Fixing only the test job left this one broken.
+        run: |
+          set -uo pipefail
+          for repo in attribution-graph paytrace handle-correlation attribution-suite; do
+            [ "$repo" = "${GITHUB_REPOSITORY##*/}" ] && continue
+            [ -d "../$repo" ] && continue
+            git clone --depth 1 \
+              "https://github.com/${GITHUB_REPOSITORY%%/*}/$repo.git" "../$repo" \
+              || {
+                   echo "::warning::sibling $repo not available yet"
+                   echo -n "$repo " >> /tmp/siblings-missing
+                 }
+          done
+
+      - name: Install the dependency set being released
+        # A bare pip-audit audits whatever is in the environment. Without this
+        # the green result described the audit tools' own dependencies rather
+        # than the shipped closure.
+        run: |
+          set -euo pipefail
+          for repo in attribution-graph paytrace handle-correlation; do
+            [ -d "../$repo" ] && pip install -e "../$repo"
+          done
+          pip install -e ".[dev]"
+      - name: Dependency CVEs (fails the build)
+        # Audits the resolved THIRD-PARTY closure in a clean venv.
+        #
+        # `pip-audit --strict` over the working environment always failed here:
+        # our own packages are installed editable and are not on PyPI, and
+        # --strict treats "could not be audited" and "skipped as editable" as
+        # errors. So the gate was red for a reason that had nothing to do with
+        # vulnerabilities, on every run, in every repo.
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/auditenv
+          python - > /tmp/thirdparty.txt <<'PY'
+          import pathlib, re, tomllib
+
+          # Walk this package AND any sibling checkouts. attribution-suite
+          # declares only internal dependencies, so looking at its own
+          # pyproject alone produced an EMPTY closure -- an audit that checked
+          # nothing and reported "no known vulnerabilities". Its real
+          # third-party surface (httpx, pyyaml) arrives through the siblings.
+          ours = {"attribution-graph", "paytrace", "handle-correlation",
+                  "attribution-suite"}
+          roots = [pathlib.Path("pyproject.toml")]
+          roots += [pathlib.Path("..") / name / "pyproject.toml"
+                    for name in sorted(ours)]
+
+          seen = set()
+          for root in roots:
+              if not root.exists():
+                  continue
+              data = tomllib.loads(root.read_text())
+              project = data.get("project", {})
+              specs = list(project.get("dependencies", []))
+              for extra in (project.get("optional-dependencies") or {}).values():
+                  specs += extra
+              for dep in specs:
+                  name = re.split(r"[<>=!\[ ;]", dep)[0].strip().lower()
+                  if name and name not in ours and dep not in seen:
+                      seen.add(dep)
+                      print(dep)
+          PY
+          if [ -s /tmp/thirdparty.txt ]; then
+            /tmp/auditenv/bin/pip install -q -r /tmp/thirdparty.txt
+          fi
+          /tmp/auditenv/bin/pip freeze --exclude-editable > /tmp/closure.txt
+          echo "auditing $(wc -l < /tmp/closure.txt) third-party packages"
+          python -m venv /tmp/audittool
+          /tmp/audittool/bin/pip install -q pip-audit
+          /tmp/audittool/bin/pip-audit --strict --desc -r /tmp/closure.txt
+      - name: Version, tag and license agree
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          echo "declared version: $VERSION"
+
+          # A tag that disagrees with the source version publishes an artifact
+          # nobody can trace back to a commit.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            [ "$TAG" = "$VERSION" ] || {
+              echo "::error::tag v$TAG does not match version $VERSION"; exit 1; }
+          fi
+
+          # pyproject asserts a licence; the LICENSE file must support it.
+          if grep -q "PLACEHOLDER" LICENSE; then
+            echo "::error::LICENSE is a placeholder while pyproject declares a licence"
+            exit 1
+          fi
+
+          # Placeholder repository coordinates become broken PyPI metadata.
+          # The SENTINEL, not the owner. This searched for the production
+          # handle, so normal CI was deterministically red on valid release
+          # metadata -- and a green gate was impossible to reach.
+          if grep -rq "github.com/OWNER/" pyproject.toml README.md CITATION.cff; then
+            echo "::error::placeholder OWNER references remain in release metadata"
+            exit 1
+          fi

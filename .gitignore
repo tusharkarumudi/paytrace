@@ -1,0 +1,150 @@
+# ─────────────────────────────────────────────────────────────────────────
+# INVESTIGATION ARTIFACTS — never commit
+#
+# These are the real leak risk in this project. Case files carry the
+# authorization reference (often an internal ticket number). Evidence
+# packages carry bytes captured from a live target. Audit logs and graphs
+# carry the identifiers of whoever was investigated. A corpus index carries
+# a crawl of real domains.
+#
+# None of it is method, all of it is operational, and once it is in git
+# history it is in every clone and fork forever.
+# ─────────────────────────────────────────────────────────────────────────
+
+# Case files (authorization refs, seeds, contact emails)
+case.yaml
+case-*.yaml
+case_*.yaml
+*.case.yaml
+!case.example.yaml
+!case.demo.yaml
+
+# Run output
+out/
+out-*/
+output/
+results/
+runs/
+
+# Evidence packages: preserved response bodies, manifests, declarations
+evidence/
+captures/
+evidence_manifest.json
+DECLARATION_DRAFT.md
+TIMESTAMP.md
+verify.py
+!src/**/verify.py
+*.tsq
+*.tsr
+
+# Graphs and reports
+investigation_graph.json
+investigation_graph.minimized.json
+entities.ftm.json
+graph.cypher
+attribution_report.md
+attribution_report.html
+verification_trail.md
+verification_trail.json
+portfolio.json
+handle_graph.json
+assessments.json
+
+# Audit logs
+audit.jsonl
+audit-*.jsonl
+*.audit.jsonl
+
+# Corpus indexes and crawl data
+*.sqlite
+*.sqlite3
+*.db
+!tests/**/*.sqlite
+paytrace.sqlite
+domains.txt
+tranco*.csv
+tranco*.txt
+
+# Operational blocklists — data, not method
+infra_blacklist*.txt
+*blacklist*.txt
+!tests/**/*blacklist*.txt
+
+# Imported third-party investigation exports
+investigations/
+spiderfoot*.db
+spiderfoot*.csv
+*.stix.json
+opencti*.json
+robin*.json
+
+# Handle observations (real handles from real cases)
+handles*.csv
+observations*.csv
+!examples/demo.csv
+
+# Calibration corpora (labelled pairs from closed cases)
+labelled_pairs.json
+pairs.json
+train.json
+test.json
+calibration_report.md
+corpus/
+
+# HTTP response cache
+.eae-cache/
+.cache/
+
+# ─────────────────────────────────────────────────────────────────────────
+# Secrets
+# ─────────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/tests/**/*.key
+.pypirc
+credentials.json
+secrets.yaml
+
+# ─────────────────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+.tox/
+.nox/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+
+# ─────────────────────────────────────────────────────────────────────────
+# Editors and OS
+# ─────────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.verify-venv/

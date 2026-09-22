@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Pinned action SHAs go stale — Node 20 is already deprecated. Updating them
+  # by hand risks a mistyped SHA, which is a supply-chain problem rather than a
+  # typo. Dependabot raises each bump as a reviewed pull request instead.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"

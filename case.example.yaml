@@ -1,0 +1,43 @@
+# Mandatory. The engine refuses to start without case_ref, authorization, seeds.
+case_ref: SCRAPE-2026-0417
+authorization: "IR ticket SEC-88213 / legal preservation request 2026-08-02"
+contact_email: "threatintel@example.com"
+
+seeds:
+  - domain:scraper-site.example
+  - seller_id:pubmatic.com/156423
+  - org_name:Example Media Holdings Ltd
+
+# Hard cap on hops from an authorized seed. This is the control that keeps an
+# infrastructure investigation from walking into the personal life of someone
+# who once committed to a shared repo.
+pivot_radius: 3
+
+# A case scoped to Company will refuse to instantiate Person entities at all.
+entity_types_allowed:
+  - Company
+
+# Person-scoped collection is opt-in and needs all of the following.
+# Key 1 above: add Persona (or Person) to entity_types_allowed.
+# Key 2: name each collector you want. Enabling one does not enable the rest.
+# persona_collectors: [gravatar, github_intel, pgp_wkd, holehe]
+#
+# Key 3: handle enumeration specifically. Sweeping hundreds of sites for a bare
+# handle differs in kind from looking up an identifier you already hold, and by
+# the scoring model'"'"'s own logic returns very little -- every hit lands in one
+# correlation group, so five hundred matches score the same as one.
+# allow_username_enumeration: false
+
+jurisdictions: [US, EU, IN]
+
+# Salted-hash identifiers at rest; rehydrated only in the final report.
+minimize: true
+retention_days: 180
+
+budget:
+  max_requests: 4000
+  max_nodes: 15000
+  max_runtime_s: 1800
+
+# Inside the case output, which is created 0700.
+audit_path: ./out/audit.jsonl

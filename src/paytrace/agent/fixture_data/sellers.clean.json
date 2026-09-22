@@ -1,0 +1,13 @@
+{
+  "contact_email": "sellers@pubmatic.example",
+  "version": "1.0",
+  "sellers": [
+    {
+      "seller_id": "156423",
+      "name": "Example Media Holdings Ltd",
+      "domain": "examplemedia.example",
+      "seller_type": "PUBLISHER",
+      "is_confidential": 0
+    }
+  ]
+}

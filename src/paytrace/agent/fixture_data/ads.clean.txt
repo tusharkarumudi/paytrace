@@ -1,0 +1,4 @@
+# ads.txt for scraper-site.example
+OWNERDOMAIN=examplemedia.example
+pubmatic.example, 156423, DIRECT, 5d62403b186f2ace
+adx.example, pub-1234567890123456, DIRECT

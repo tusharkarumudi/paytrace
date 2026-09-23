@@ -37,9 +37,6 @@ def test_spec_compliant_systems_use_the_root():
     assert candidate_urls("pubmatic.com")[0] == "https://pubmatic.com/sellers.json"
 
 
-def test_root_is_still_attempted_for_known_systems():
-    """A known location must not stop the root being tried as a fallback."""
-    assert "https://google.com/sellers.json" in candidate_urls("google.com")
 
 
 # ---- large files ----------------------------------------------------------- #
@@ -355,3 +352,67 @@ def test_a_failed_read_falls_back_to_streaming(monkeypatch):
 
     rec = asyncio.run(go())
     assert rec and rec.name == "Example Ltd", "the fallback must retry the same URL"
+
+
+def test_an_unusable_response_is_recorded_not_skipped(monkeypatch):
+    """`if not r or r.status != 200: continue` skipped in silence, so a
+    candidate refused with 403 or 429 looked exactly like one never tried.
+    Google's sellers.json host returned something unusable and nothing in the
+    run said so — not as evidence, not as a block, not as an error."""
+    import asyncio
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        return httpx.Response(403, text="")
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "google.com", "pub-1")
+        blocked = list(f.blocked)
+        await f.aclose()
+        return rec, blocked
+
+    rec, blocked = asyncio.run(go())
+    assert rec is None
+    assert blocked, "an unusable response must be recorded"
+    assert any("HTTP 403" in why for _u, why in blocked), blocked
+    assert any("storage.googleapis.com" in u for u, _w in blocked), \
+        "the known location must appear, so it is visible that it was tried"
+
+
+def test_a_known_location_is_the_only_one_tried():
+    """The spec's default was appended after the known location, so every
+    Google seller also fetched `https://google.com/sellers.json` — a URL that
+    does not exist and that Google's robots.txt disallows. Two futile requests
+    and two blocked entries per seller, burying the real diagnosis."""
+    from paytrace.sellersjson import SELLERS_JSON_LOCATIONS, candidate_urls
+
+    assert candidate_urls("google.com") == [SELLERS_JSON_LOCATIONS["google.com"]]
+    assert not any("https://google.com/sellers.json" in u
+                   for u in candidate_urls("google.com"))
+
+
+def test_ad_systems_without_a_known_location_still_use_the_spec_default():
+    from paytrace.sellersjson import candidate_urls
+
+    assert candidate_urls("unknown-ssp.example") == [
+        "https://unknown-ssp.example/sellers.json",
+        "https://www.unknown-ssp.example/sellers.json",
+    ]

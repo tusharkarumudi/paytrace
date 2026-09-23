@@ -72,11 +72,19 @@ def sellers_json_url(adsystem: str) -> str:
 
 
 def candidate_urls(adsystem: str) -> list[str]:
-    """Locations to try, in order. The root is still attempted for ad systems
-    that follow the spec."""
+    """Locations to try, in order.
+
+    When a known location is configured, that IS the location -- the spec's
+    default is not tried as well. For google.com the default is
+    ``https://google.com/sellers.json``, which does not exist and which
+    Google's robots.txt disallows, so every Google seller produced two futile
+    requests and two blocked entries that buried the real diagnosis.
+    """
     known = SELLERS_JSON_LOCATIONS.get(adsystem.lower())
+    if known:
+        return [known]
     root = f"https://{adsystem.lower()}/sellers.json"
-    return [known, root] if known else [root, f"https://www.{adsystem.lower()}/sellers.json"]
+    return [root, f"https://www.{adsystem.lower()}/sellers.json"]
 
 
 # --------------------------------------------------------------------------- #
@@ -258,6 +266,15 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
     for url in candidate_urls(adsystem):
         seen = len(getattr(fetcher, "blocked", ()))
         r = await fetcher.get(url)
+        # A response that ARRIVES and is useless -- 403, 429, an error page --
+        # was skipped in silence, so a refused candidate looked exactly like one
+        # that was never tried. Record it unless something already did.
+        if len(getattr(fetcher, "blocked", ())) == seen and (
+                r is None or r.status != 200 or not r.text):
+            status = "no response" if r is None else f"HTTP {r.status}"
+            size = 0 if r is None else len(r.text or "")
+            fetcher.blocked.append(
+                (url, f"no usable sellers.json: {status}, {size} byte body"))
         truncated = any("truncated" in why
                         for _u, why in list(getattr(fetcher, "blocked", ()))[seen:])
         usable = bool(r and r.status == 200 and r.text)
@@ -271,7 +288,13 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
         # google.com that is https://google.com/sellers.json, which robots.txt
         # disallows, so the payee was never named.
         if truncated or not usable:
+            before = len(getattr(fetcher, "blocked", ()))
             rec = await _stream_at(fetcher, url, adsystem, seller_id)
+            if rec is None and len(getattr(fetcher, "blocked", ())) == before:
+                scanned = (getattr(fetcher, "last_scan", None) or {}).get("bytes")
+                fetcher.blocked.append(
+                    (url, f"streamed {scanned} byte(s); seller {seller_id} not "
+                          "present in the document"))
             if rec:
                 # The truncation was recovered: this retrieval DID produce
                 # evidence. Leaving it in `blocked` counted a successful

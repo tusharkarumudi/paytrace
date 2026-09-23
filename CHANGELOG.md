@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.11] - 2026-09-23
+
+- A known sellers.json location is now the only one tried. The spec's default
+  was appended after it, so every Google seller also fetched
+  `https://google.com/sellers.json` — a URL that does not exist and that
+  Google's robots.txt disallows — producing two futile requests and two blocked
+  entries per seller that buried the real diagnosis.
+
+## [2.0.10] - 2026-09-23
+
+- A response that arrives and is unusable is now recorded. `if not r or
+  r.status != 200: continue` skipped 403s, 429s and error pages in silence, so
+  a refused candidate looked exactly like one that was never tried: the known
+  location for Google's sellers.json appeared nowhere in a run — not as
+  evidence, not as a block, not as an error. Each attempt now reports its
+  status and body size, and a streamed document that lacks the seller says so.
+
 ## [2.0.9] - 2026-09-23
 
 - Transport failures are no longer silent. `except httpx.HTTPError: return

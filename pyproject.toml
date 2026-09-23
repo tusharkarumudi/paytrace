@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paytrace"
-version = "2.0.9"
+version = "2.0.11"
 description = "Trace a website to the legal entity that gets paid for it"
 readme = "README.md"
 requires-python = ">=3.11"

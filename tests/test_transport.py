@@ -522,3 +522,58 @@ def test_no_api_token_rides_in_a_request_url():
            / "collectors" / "registries.py").read_text()
     assert not re.search(r'url = f"[^"]*(api_token|api_key|token)=', src)
     assert "def _auth(" in src
+
+
+# ---- a failure must never be silent ---------------------------------------- #
+
+def test_a_transport_error_is_recorded_not_swallowed(monkeypatch):
+    """`except httpx.HTTPError: return None` made timeouts, resets and read
+    errors indistinguishable from "checked and found nothing".
+
+    Two attempts on a 104 MB sellers.json failed this way and left no trace at
+    all, so the run reported no payee and no reason for it.
+    """
+    import asyncio
+
+    import httpx
+
+    import paytrace.net as net
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        raise httpx.ReadTimeout("simulated stall")
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        r = await f.get("https://example.com/sellers.json")
+        blocked = list(f.blocked)
+        await f.aclose()
+        return r, blocked
+
+    r, blocked = asyncio.run(go())
+    assert r is None
+    assert blocked, "the failure must be recorded"
+    url, why = blocked[0]
+    assert url == "https://example.com/sellers.json"
+    assert "ReadTimeout" in why, why
+
+
+def test_scan_mode_gets_a_timeout_suited_to_a_huge_body():
+    """The ordinary timeout is sized for a document, not for 104 MB."""
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[1]
+              / "src" / "paytrace" / "net.py").read_text()
+    assert 'max(self._timeout, 300.0)' in source

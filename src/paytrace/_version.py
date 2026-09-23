@@ -5,4 +5,4 @@ circular import: the package __init__ imports those submodules before it has
 finished defining __version__.
 """
 
-__version__ = "2.0.8"
+__version__ = "2.0.9"

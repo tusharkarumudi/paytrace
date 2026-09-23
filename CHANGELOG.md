@@ -6,6 +6,16 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-09-23
+
+- Transport failures are no longer silent. `except httpx.HTTPError: return
+  None` discarded every timeout, reset and read error without a trace, so a
+  failed retrieval was indistinguishable from one that checked and found
+  nothing. Two attempts on a 104 MB sellers.json disappeared this way and the
+  run reported no payee and no reason.
+- Scan mode uses a timeout suited to a very large body (at least 300s); the
+  ordinary 20s is sized for a document.
+
 ## [2.0.8] - 2026-09-23
 
 - The streaming fallback now also runs when the ordinary read fails outright,

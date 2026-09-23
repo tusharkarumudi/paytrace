@@ -583,7 +583,11 @@ class Fetcher:
             self.count += 1
             client = self.client_for(egress)
             try:
-                async with client.stream("GET", url, headers=headers) as r:
+                # Scan mode exists for bodies far too large to hold; the
+                # ordinary timeout is sized for a document, not for 104 MB.
+                stream_kw = {"timeout": max(self._timeout, 300.0)} if scanner else {}
+                async with client.stream("GET", url, headers=headers,
+                                         **stream_kw) as r:
                     if r.status_code not in (301, 302, 303, 307, 308):
                         body, truncated = await self._read_capped(
                             r, scanner=scanner, cap=scan_max_bytes)
@@ -606,7 +610,13 @@ class Fetcher:
                         return (r.status_code, b"", r.encoding, False, url,
                                 safe_headers(r.request.headers),
                                 safe_headers(r.headers))
-            except httpx.HTTPError:
+            except httpx.HTTPError as e:
+                # NEVER silent. A swallowed transport error is indistinguishable
+                # from "checked and found nothing": two attempts on a 104 MB
+                # sellers.json failed here and left no trace at all, so the run
+                # reported no payee and no reason.
+                self.blocked.append(
+                    (url, f"transport error: {type(e).__name__}: {e}"))
                 return None
 
             url = str(httpx.URL(url).join(location))

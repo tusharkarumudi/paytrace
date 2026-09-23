@@ -300,3 +300,58 @@ def test_a_recovered_truncation_is_not_reported_as_blocked(monkeypatch):
     rec, blocked = asyncio.run(go())
     assert rec and rec.name == "Example Ltd"
     assert not [b for b in blocked if "truncated" in b[1]], blocked
+
+
+def test_a_failed_read_falls_back_to_streaming(monkeypatch):
+    """Streaming triggered only on truncation. A 104 MB body that timed out or
+    errored fell through to the next candidate — for google.com that is
+    https://google.com/sellers.json, which robots.txt disallows — so the payee
+    was never named, and the run merely reported a blocked URL."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    target = _json.dumps({"seller_id": "pub-544", "name": "Example Ltd",
+                          "domain": "x.example", "seller_type": "PUBLISHER"})
+    doc = ('{"sellers":['
+           + ",".join(_json.dumps({"seller_id": str(i), "name": "F" * 50})
+                      for i in range(2000))
+           + "," + target + "]}").encode()
+    attempts = {"n": 0}
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            body = ("User-agent: *\nDisallow: /sellers.json\n"
+                    if req.url.host == "google.com" else "User-agent: *\nAllow: /\n")
+            return httpx.Response(200, text=body)
+        if "adx-rtb-dictionaries" in req.url.path:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise httpx.ReadTimeout("simulated timeout on a very large body")
+            return httpx.Response(200, content=doc,
+                                  headers={"content-type": "application/json"})
+        return httpx.Response(404)
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "google.com", "pub-544")
+        await f.aclose()
+        return rec
+
+    rec = asyncio.run(go())
+    assert rec and rec.name == "Example Ltd", "the fallback must retry the same URL"

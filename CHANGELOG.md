@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.8] - 2026-09-23
+
+- The streaming fallback now also runs when the ordinary read fails outright,
+  not only when it is truncated. A 104 MB sellers.json that timed out fell
+  through to the next candidate — for google.com that is
+  `https://google.com/sellers.json`, which robots.txt disallows — so the payee
+  was never named and the run only reported a blocked URL.
+
 ## [2.0.7] - 2026-09-23
 
 - A disclaimer is no longer read as a relationship. A viewer site's terms page

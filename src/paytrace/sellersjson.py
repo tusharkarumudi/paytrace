@@ -260,11 +260,17 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
         r = await fetcher.get(url)
         truncated = any("truncated" in why
                         for _u, why in list(getattr(fetcher, "blocked", ()))[seen:])
-        if r and r.status == 200 and r.text:
+        usable = bool(r and r.status == 200 and r.text)
+        if usable:
             rec = find_seller_in_text(r.text, adsystem, seller_id, url)
             if rec:
                 return rec
-        if truncated:
+        # Stream when the ordinary read was truncated OR did not complete at
+        # all. Triggering only on truncation meant a 104 MB body that timed out
+        # or errored fell straight through to the next candidate -- and for
+        # google.com that is https://google.com/sellers.json, which robots.txt
+        # disallows, so the payee was never named.
+        if truncated or not usable:
             rec = await _stream_at(fetcher, url, adsystem, seller_id)
             if rec:
                 # The truncation was recovered: this retrieval DID produce

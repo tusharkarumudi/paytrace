@@ -6,6 +6,20 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.7] - 2026-09-23
+
+- A disclaimer is no longer read as a relationship. A viewer site's terms page
+  says "not affiliated with Instagram, Meta Platforms, Inc." to DENY the
+  connection; the name was extracted without its sentence, so the denial became
+  evidence of the link and Meta was reported against the site at
+  STRONG_EVIDENCE. Names inside denial and trademark phrasings are skipped.
+
+## [2.0.6] - 2026-09-23
+
+- A truncation recovered by the streaming fallback is no longer reported as a
+  blocked retrieval. It inflated `collection_blocked` and reported the run
+  INCOMPLETE for a gap that had been filled.
+
 ## [2.0.5] - 2026-09-23
 
 - A company name can no longer be assembled from page furniture. HTML tags were

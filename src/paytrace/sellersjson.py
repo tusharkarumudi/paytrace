@@ -267,6 +267,13 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
         if truncated:
             rec = await _stream_at(fetcher, url, adsystem, seller_id)
             if rec:
+                # The truncation was recovered: this retrieval DID produce
+                # evidence. Leaving it in `blocked` counted a successful
+                # fallback as a failed fetch, inflating collection_blocked and
+                # reporting the run INCOMPLETE for a gap that was filled.
+                fetcher.blocked[:] = [
+                    entry for entry in fetcher.blocked
+                    if not (entry[0] == url and "truncated" in entry[1])]
                 return rec
     return None
 

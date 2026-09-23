@@ -366,6 +366,30 @@ class SecEdgar(Collector):
         return claims
 
 
+#: Phrasings that DENY a relationship. A viewer site's terms page says "not
+#: affiliated with Instagram, Meta Platforms, Inc." precisely to disclaim the
+#: connection; reading the name out of that sentence inverted its meaning and
+#: reported the disclaimer as evidence of the relationship.
+_DISCLAIMER = re.compile(
+    r"(not\s+(?:affiliated|associated|connected|endorsed|sponsored|related)"
+    r"|no\s+(?:affiliation|association|connection|relationship)"
+    r"|independent\s+of|unaffiliated|is\s+a\s+(?:registered\s+)?trademark"
+    r"|trademarks?\s+(?:are\s+)?(?:the\s+)?propert|all\s+rights\s+reserved\s+by"
+    r"|owned\s+by\s+their\s+respective)", re.I)
+
+#: How far back to read for a denial. Long enough for "X is not affiliated,
+#: associated, authorised, endorsed by, or in any way officially connected with
+#: <NAME>", short enough not to swallow a neighbouring sentence.
+_DISCLAIMER_WINDOW = 220
+
+
+def _disclaimed(text: str, start: int) -> bool:
+    """Is this name inside a sentence that DENIES a relationship?"""
+    window = text[max(0, start - _DISCLAIMER_WINDOW):start]
+    window = window.rsplit("|", 1)[-1]        # do not cross an element boundary
+    return bool(_DISCLAIMER.search(window))
+
+
 #: Words that are page furniture, not parts of a company name. A candidate made
 #: only of these is a form or a menu that happens to sit near a legal suffix.
 _FURNITURE = {
@@ -440,9 +464,14 @@ class Imprint(Collector):
             text = re.sub(r"[ \t\r\n]+", " ", text)[:40_000]
             group = f"imprint|{ident.value}|{path}"
 
-            for m in dict.fromkeys(self.ENTITY_RE.findall(text)):
-                if not _plausible_org_name(m):
+            seen_names = set()
+            for match in self.ENTITY_RE.finditer(text):
+                m = match.group(1)
+                if m in seen_names or not _plausible_org_name(m):
                     continue
+                if _disclaimed(text, match.start()):
+                    continue          # a denial is not a relationship
+                seen_names.add(m)
                 claims.append(self.claim(
                     ident, Predicate.LEGAL_NAME,
                     Identifier(IdKind.ORG_NAME, m.strip()), url,

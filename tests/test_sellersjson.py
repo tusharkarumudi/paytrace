@@ -251,3 +251,52 @@ def test_oversized_sellers_json_is_streamed_and_resolved(monkeypatch):
     assert rec and rec.name == "Example Media Holdings Ltd"
     assert scan and scan["bytes"] == len(doc), "the whole body must be streamed"
     assert scan["sha256"], "the retrieval must stay evidenced by a digest"
+
+
+def test_a_recovered_truncation_is_not_reported_as_blocked(monkeypatch):
+    """The streaming fallback fills the gap, so counting the truncated first
+    attempt as a blocked retrieval reported the run INCOMPLETE for something
+    that did produce evidence."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    target = _json.dumps({"seller_id": "pub-1", "name": "Example Ltd",
+                          "domain": "x.example", "seller_type": "PUBLISHER"})
+    filler = ",".join(_json.dumps({"seller_id": str(i), "name": f"F{i}" * 40})
+                      for i in range(60000))
+    doc = ('{"sellers":[' + filler + "," + target + "]}").encode()
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        if req.url.path.endswith("sellers.json"):
+            return httpx.Response(200, content=doc,
+                                  headers={"content-type": "application/json"})
+        return httpx.Response(404)
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "google.com", "pub-1")
+        blocked = list(f.blocked)
+        await f.aclose()
+        return rec, blocked
+
+    rec, blocked = asyncio.run(go())
+    assert rec and rec.name == "Example Ltd"
+    assert not [b for b in blocked if "truncated" in b[1]], blocked

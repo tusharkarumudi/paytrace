@@ -424,6 +424,20 @@ class Fetcher:
         if truncated:
             self.blocked.append((url, f"body truncated at {self.max_bytes} bytes"))
         text = raw.decode(encoding or "utf-8", errors="replace")
+
+        # A TRUNCATED body is never cached. Caching it poisoned every later
+        # run: the next fetch was served the 10 MB fragment of a 104 MB
+        # sellers.json, found no record in it, and -- because nothing was
+        # truncated that time -- never triggered the streaming fallback. The
+        # payee simply disappeared between two identical commands.
+        if truncated:
+            self._record_evidence(final_url, status, raw, egress,
+                                  request_headers=req_h, response_headers=resp_h,
+                                  outcome="truncated",
+                                  note=f"body truncated at {self.max_bytes} bytes; "
+                                       "not cached")
+            return Response(final_url, status, text)
+
         # 0600 for the same reason.
         cp.touch(mode=0o600, exist_ok=True)
         cp.write_text(json.dumps({

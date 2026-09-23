@@ -249,3 +249,53 @@ def test_real_names_survive_the_guard():
     for real in ("Example Media Holdings Inc", "Contact Lens Group Ltd",
                  "First Data Corporation Inc", "Home Retail Group Ltd"):
         assert _plausible_org_name(real), real
+
+
+# ---- a denial is not a relationship ---------------------------------------- #
+
+def _names_from(html):
+    import re as _re
+
+    from paytrace.collectors.business import Imprint, _disclaimed, _plausible_org_name
+
+    text = _re.sub(r"<[^>]+>", " | ", html)
+    text = _re.sub(r"[ \t\r\n]+", " ", text)
+    return [m.group(1) for m in Imprint.ENTITY_RE.finditer(text)
+            if _plausible_org_name(m.group(1)) and not _disclaimed(text, m.start())]
+
+
+def test_a_disclaimer_is_not_evidence_of_a_relationship():
+    """A viewer site's terms page says "not affiliated with Instagram, Meta
+    Platforms, Inc." to DENY the connection. Reading the name out of that
+    sentence inverted its meaning: the run reported Meta as linked to the site
+    at STRONG_EVIDENCE."""
+    assert _names_from(
+        "<p>InstaPV is not affiliated with Instagram, Meta Platforms, Inc.</p>"
+    ) == []
+
+
+def test_common_denial_phrasings_are_caught():
+    for html in (
+        "<p>We have no affiliation with Example Holdings Ltd</p>",
+        "<p>This service is independent of Example Holdings Ltd</p>",
+        "<p>Not endorsed by or connected with Example Holdings Ltd</p>",
+        "<p>Instagram is a trademark of Meta Platforms, Inc.</p>",
+        "<p>All trademarks are property of Example Holdings Ltd</p>",
+    ):
+        assert _names_from(html) == [], html
+
+
+def test_the_real_operator_still_survives_a_page_with_a_disclaimer():
+    """The denial must not suppress an unrelated, genuine statement."""
+    assert _names_from(
+        "<p>Not affiliated with Meta Platforms, Inc.</p>"
+        "<footer>Operated by Example Media Holdings Inc</footer>"
+    ) == ["Example Media Holdings Inc"]
+
+
+def test_a_denial_does_not_reach_across_elements():
+    """The window stops at an element boundary, so a disclaimer in one block
+    cannot silence a company named in the next."""
+    assert _names_from(
+        "<p>Not affiliated with anyone.</p><p>Example Media Holdings Inc</p>"
+    ) == ["Example Media Holdings Inc"]

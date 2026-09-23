@@ -6,6 +6,41 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.14] - 2026-09-23
+
+- The archived sellers.json search is now opt-in (`resolve_seller(...,
+  archive=True)`). Operators copy ads.txt files wholesale, another operator's
+  lines included, so an absent account may never have existed in that ad system
+  — and searching the archive for each of 35 declared accounts costs a CDX
+  query plus snapshot fetches on a service that is slow and often times out.
+- `sovrn.com` maps to `https://lijit.com/sellers.json`; Sovrn does not host
+  sellers.json on its own domain.
+
+## [2.0.13] - 2026-09-23
+
+- A seller missing from the live sellers.json is now looked for in archived
+  copies of that same file. Publishers rarely prune ads.txt; ad systems prune
+  sellers.json regularly, so an account declared in ads.txt but absent from the
+  current document is usually one that WAS there. Up to three snapshots are
+  tried, newest first, and the record carries its snapshot URL as its source so
+  the report shows it as evidence of a past relationship.
+
+## [2.0.12] - 2026-09-23
+
+- "Checked and absent" is no longer filed as a block. A sellers.json that was
+  read successfully and simply lacks the seller is a negative RESULT, not a
+  failed retrieval: counting it inflated `collection_blocked`, forced the run
+  INCOMPLETE, and produced one summary category per byte count
+  ("streamed 101970 byte (2), streamed 3168 byte (1), ..."). It was also
+  appended to a throwaway list, so the note vanished entirely.
+
+## [2.0.12] - 2026-09-23
+
+- A document that was streamed and simply lacks the seller is now reported as
+  a COMPLETED check with a negative result, not a blocked retrieval. Filing it
+  under blocked inflated the blocked count, forced the result INCOMPLETE, and
+  blurred the distinction between 'could not check' and 'checked, not found'.
+
 ## [2.0.11] - 2026-09-23
 
 - A known sellers.json location is now the only one tried. The spec's default

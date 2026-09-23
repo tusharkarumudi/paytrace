@@ -174,6 +174,11 @@ class Fetcher:
         # of the investigation wrote.
         self.url_policy = url_policy or UrlPolicy()
         self.blocked: list[tuple[str, str]] = []
+        #: Retrievals that COMPLETED and found nothing. A negative result is
+        #: not a blocked fetch: filing it under `blocked` inflated the blocked
+        #: count, forced the result INCOMPLETE, and blurred the one distinction
+        #: this toolkit exists to make.
+        self.checked_absent: list[tuple[str, str]] = []
         #: byte count and digest of the last scan-mode retrieval
         self.last_scan: dict | None = None
         # Content varies by the requester's apparent location, so the exit used

@@ -416,3 +416,208 @@ def test_ad_systems_without_a_known_location_still_use_the_spec_default():
         "https://unknown-ssp.example/sellers.json",
         "https://www.unknown-ssp.example/sellers.json",
     ]
+
+
+def test_checked_and_absent_is_not_a_blocked_retrieval(monkeypatch):
+    """A streamed document that simply lacks the seller is a COMPLETED check
+    with a negative result. Filing it under `blocked` inflated the blocked
+    count, forced the result INCOMPLETE, and blurred the one distinction this
+    toolkit exists to make."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    doc = _json.dumps({"sellers": [{"seller_id": "someone-else",
+                                    "name": "Other Ltd"}]}).encode()
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        if req.url.path.endswith("sellers.json"):
+            return httpx.Response(200, content=doc,
+                                  headers={"content-type": "application/json"})
+        return httpx.Response(404)
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "adnet.example", "not-there")
+        out = (rec, list(f.blocked), list(f.checked_absent))
+        await f.aclose()
+        return out
+
+    rec, blocked, absent = asyncio.run(go())
+    assert rec is None
+    assert not [b for b in blocked if "not in this document" in b[1]], blocked
+
+
+def test_checked_and_absent_is_not_a_block(monkeypatch):
+    """A document that was READ and simply lacks the seller is "checked and not
+    found" — the opposite of blocked. Recording it under `blocked` inflated the
+    blocked count, forced the run INCOMPLETE, and produced one summary category
+    per byte count. It was also appended to a throwaway list, so it vanished."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    doc = _json.dumps({"sellers": [{"seller_id": "other", "name": "Someone"}]})
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        return httpx.Response(200, text=doc,
+                              headers={"content-type": "application/json"})
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "adnet.example", "missing-seller")
+        out = (rec, list(f.blocked), list(f.checked_absent))
+        await f.aclose()
+        return out
+
+    rec, blocked, absent = asyncio.run(go())
+    assert rec is None
+    assert not [b for b in blocked if "not in this document" in b[1]], blocked
+
+
+def test_a_pruned_seller_is_found_in_the_archive(monkeypatch):
+    """Publishers rarely prune ads.txt; ad systems prune sellers.json often. An
+    account declared in ads.txt but absent from the live sellers.json is usually
+    one that WAS there, so the record is looked for in archived copies before
+    giving up — and carries the snapshot URL as its source, so the report shows
+    it is evidence of a past relationship."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    live = _json.dumps({"sellers": [{"seller_id": "other", "name": "Someone Else"}]})
+    archived = _json.dumps({"sellers": [{"seller_id": "6tfv", "name": "Relabe LLC",
+                                         "domain": "relabe.com",
+                                         "seller_type": "PUBLISHER"}]})
+
+    def handler(req):
+        u = str(req.url)
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        if "cdx/search" in u:
+            return httpx.Response(200, json=[
+                ["timestamp", "original"],
+                ["20230101000000", "https://demand.supply/sellers.json"],
+                ["20250601000000", "https://demand.supply/sellers.json"]])
+        if "web.archive.org/web/" in u:
+            return httpx.Response(200, text=archived,
+                                  headers={"content-type": "application/json"})
+        if u.endswith("sellers.json"):
+            return httpx.Response(200, text=live,
+                                  headers={"content-type": "application/json"})
+        return httpx.Response(404)
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "demand.supply", "6tfv", archive=True)
+        absent = list(f.checked_absent)
+        await f.aclose()
+        return rec, absent
+
+    rec, absent = asyncio.run(go())
+    assert rec and rec.name == "Relabe LLC"
+    assert "web.archive.org" in rec.source_url, "provenance must show the snapshot"
+    assert "20250601" in rec.source_url, "newest snapshot first"
+    assert absent, "the live document being checked and lacking it must be recorded"
+
+
+def test_the_archive_is_not_searched_by_default(monkeypatch):
+    """Operators copy ads.txt files wholesale, another operator's lines
+    included, so an absent account may never have existed in this ad system.
+    Searching the archive for each of 35 declared accounts costs a CDX query
+    plus snapshot fetches on a service that is slow and often times out."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    asked = {"cdx": 0}
+    live = _json.dumps({"sellers": [{"seller_id": "other", "name": "Someone"}]})
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        if "cdx/search" in str(req.url):
+            asked["cdx"] += 1
+            return httpx.Response(200, json=[["timestamp", "original"]])
+        return httpx.Response(200, text=live,
+                              headers={"content-type": "application/json"})
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "adnet.example", "missing")
+        await f.aclose()
+        return rec
+
+    assert asyncio.run(go()) is None
+    assert asked["cdx"] == 0, "no archive query unless asked for"
+
+
+def test_sovrn_publishes_at_lijit():
+    """Sovrn does not host sellers.json on its own domain."""
+    from paytrace.sellersjson import candidate_urls
+
+    assert candidate_urls("sovrn.com") == ["https://lijit.com/sellers.json"]

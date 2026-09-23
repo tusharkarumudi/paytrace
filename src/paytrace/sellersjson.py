@@ -52,6 +52,9 @@ SELLERS_JSON_LOCATIONS: dict[str, str] = {
     "doubleclick.net": "https://storage.googleapis.com/adx-rtb-dictionaries/sellers.json",
     "googletagservices.com": (
         "https://storage.googleapis.com/adx-rtb-dictionaries/sellers.json"),
+    # Sovrn does not host sellers.json on its own domain: it publishes at
+    # lijit.com, which is also the ad system name that appears in ads.txt.
+    "sovrn.com": "https://lijit.com/sellers.json",
 }
 
 #: Ad systems whose sellers.json is large enough that streaming is mandatory.
@@ -255,7 +258,8 @@ def find_seller_in_text(body: str, adsystem: str, seller_id: str,
     return None
 
 
-async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord | None:
+async def resolve_seller(fetcher, adsystem: str, seller_id: str,
+                         archive: bool = False) -> SellerRecord | None:
     """Fetch and locate a seller, trying every known location for the ad system.
 
     Falls back to a streaming scan when the document is too large to hold.
@@ -263,6 +267,7 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
     the payee could never be named -- for the ad system that serves the
     majority of ad-funded sites.
     """
+    absent_at: list[str] = []
     for url in candidate_urls(adsystem):
         seen = len(getattr(fetcher, "blocked", ()))
         r = await fetcher.get(url)
@@ -282,6 +287,11 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
             rec = find_seller_in_text(r.text, adsystem, seller_id, url)
             if rec:
                 return rec
+            absent_at.append(url)
+            if hasattr(fetcher, "checked_absent"):
+                fetcher.checked_absent.append(
+                    (url, f"checked and absent: seller {seller_id} is not in the "
+                          "current document"))
         # Stream when the ordinary read was truncated OR did not complete at
         # all. Triggering only on truncation meant a 104 MB body that timed out
         # or errored fell straight through to the next candidate -- and for
@@ -292,9 +302,14 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
             rec = await _stream_at(fetcher, url, adsystem, seller_id)
             if rec is None and len(getattr(fetcher, "blocked", ())) == before:
                 scanned = (getattr(fetcher, "last_scan", None) or {}).get("bytes")
-                fetcher.blocked.append(
-                    (url, f"streamed {scanned} byte(s); seller {seller_id} not "
-                          "present in the document"))
+                # Checked and absent -- NOT blocked. `getattr(f, "x", [])`
+                # appended to a throwaway list when the attribute was missing,
+                # so this was discarded entirely.
+                if hasattr(fetcher, "checked_absent"):
+                    fetcher.checked_absent.append(
+                        (url, f"checked and absent: seller {seller_id} is not in "
+                              f"this document ({scanned} bytes read)"))
+                absent_at.append(url)
             if rec:
                 # The truncation was recovered: this retrieval DID produce
                 # evidence. Leaving it in `blocked` counted a successful
@@ -304,6 +319,19 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord
                     entry for entry in fetcher.blocked
                     if not (entry[0] == url and "truncated" in entry[1])]
                 return rec
+    # Read successfully and the seller is not there. Often the account was
+    # pruned -- ad systems prune, publishers rarely do. But operators also copy
+    # ads.txt files wholesale, another operator's lines included, so an account
+    # may never have existed in this ad system at all. An archive search costs a
+    # CDX query plus snapshot fetches per seller, on a service that is slow and
+    # frequently times out, so it is OFF by default: ask for it when the account
+    # matters rather than paying it for all 35 lines of an ads.txt.
+    if not archive:
+        return None
+    for url in dict.fromkeys(absent_at):
+        rec = await archived_seller(fetcher, url, adsystem, seller_id)
+        if rec:
+            return rec
     return None
 
 
@@ -389,3 +417,34 @@ async def stream_find_seller(fetcher, adsystem: str, seller_id: str):
     and a SHA-256 taken over the stream.
     """
     return await _stream_at(fetcher, sellers_json_url(adsystem), adsystem, seller_id)
+
+#: Snapshots of a sellers.json to try when the current one lacks the seller.
+#: Newest first: the closest copy to the ads.txt line is the most relevant.
+ARCHIVE_SNAPSHOTS = 3
+
+_CDX = "https://web.archive.org/cdx/search/cdx"
+
+
+async def archived_seller(fetcher, url: str, adsystem: str, seller_id: str):
+    """Find a seller in an ARCHIVED copy of a sellers.json.
+
+    Publishers rarely prune ads.txt; ad systems prune sellers.json regularly.
+    So an account declared in ads.txt but absent from the live sellers.json is
+    usually one that WAS there -- the relationship is historical, not fictional.
+    The archived record carries its snapshot URL as its source, so the report
+    shows what it is: evidence of a past relationship.
+    """
+    cdx = (f"{_CDX}?url={url}&output=json&fl=timestamp,original"
+           f"&filter=statuscode:200&collapse=timestamp:6&limit=40")
+    rows = await fetcher.get_json(cdx)
+    if not isinstance(rows, list) or len(rows) < 2:
+        return None
+    for ts, original in list(reversed(rows[1:]))[:ARCHIVE_SNAPSHOTS]:
+        snapshot = f"https://web.archive.org/web/{ts}id_/{original}"
+        scanner = _RecordScanner(seller_id)
+        await fetcher.get(snapshot, scanner=scanner.feed,
+                          scan_max_bytes=STREAM_MAX_BYTES)
+        if scanner.record:
+            return find_seller_in_text('{"sellers":[' + scanner.record + "]}",
+                                       adsystem, seller_id, snapshot)
+    return None

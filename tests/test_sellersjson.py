@@ -165,3 +165,89 @@ def test_ext_field_survives_as_untrusted_extra():
     rec = find_seller_in_text(body, "x.example", "1")
     assert "ext" in rec.extra
     assert "terminate" in rec.extra["ext"]
+
+
+# ---- sellers.json documents too large to hold ------------------------------ #
+
+def test_scanner_finds_a_record_split_across_chunks():
+    """Google's sellers.json is 104 MB; it arrives in chunks and a record can
+    straddle any boundary."""
+    import json as _json
+
+    from paytrace.sellersjson import _RecordScanner
+
+    target = _json.dumps({"seller_id": "156423", "name": "Example Media Holdings Ltd"})
+    doc = ('{"sellers":['
+           + ",".join(_json.dumps({"seller_id": str(i), "name": f"Other {i}"})
+                      for i in range(200))
+           + "," + target + "]}").encode()
+    for size in (1, 7, 512, 65536):
+        scanner = _RecordScanner("156423")
+        for i in range(0, len(doc), size):
+            scanner.feed(doc[i:i + size])
+        assert scanner.record, f"missed at chunk size {size}"
+        assert _json.loads(scanner.record)["name"] == "Example Media Holdings Ltd"
+
+
+def test_scanner_reports_nothing_for_an_absent_seller():
+    """It must not return a neighbouring record."""
+    import json as _json
+
+    from paytrace.sellersjson import _RecordScanner
+
+    doc = ('{"sellers":[' + _json.dumps({"seller_id": "1", "name": "A"}) + "]}").encode()
+    scanner = _RecordScanner("999")
+    scanner.feed(doc)
+    assert scanner.record is None
+
+
+def test_oversized_sellers_json_is_streamed_and_resolved(monkeypatch):
+    """The ordinary 10 MB cap truncates Google's sellers.json, so the payee
+    could never be named — for the ad system serving most ad-funded sites.
+    Nothing is retained: the body is scanned as it arrives."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    import paytrace.net as net
+    from paytrace.sellersjson import resolve_seller
+
+    target = _json.dumps({"seller_id": "pub-5446113378742009",
+                          "name": "Example Media Holdings Ltd",
+                          "domain": "x.example", "seller_type": "PUBLISHER"})
+    filler = ",".join(_json.dumps({"seller_id": str(i), "name": f"F{i}" * 40})
+                      for i in range(60000))
+    doc = ('{"sellers":[' + filler + "," + target + "]}").encode()
+    assert len(doc) > 10 * 1024 * 1024, "the body must exceed the cap to be a test"
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        if req.url.path.endswith("sellers.json"):
+            return httpx.Response(200, content=doc,
+                                  headers={"content-type": "application/json"})
+        return httpx.Response(404)
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        rec = await resolve_seller(f, "google.com", "pub-5446113378742009")
+        scan = f.last_scan
+        await f.aclose()
+        return rec, scan
+
+    rec, scan = asyncio.run(go())
+    assert rec and rec.name == "Example Media Holdings Ltd"
+    assert scan and scan["bytes"] == len(doc), "the whole body must be streamed"
+    assert scan["sha256"], "the retrieval must stay evidenced by a digest"

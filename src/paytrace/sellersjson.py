@@ -248,12 +248,108 @@ def find_seller_in_text(body: str, adsystem: str, seller_id: str,
 
 
 async def resolve_seller(fetcher, adsystem: str, seller_id: str) -> SellerRecord | None:
-    """Fetch and locate a seller, trying every known location for the ad system."""
+    """Fetch and locate a seller, trying every known location for the ad system.
+
+    Falls back to a streaming scan when the document is too large to hold.
+    Google's sellers.json is 104 MB, so the ordinary body cap truncated it and
+    the payee could never be named -- for the ad system that serves the
+    majority of ad-funded sites.
+    """
     for url in candidate_urls(adsystem):
+        seen = len(getattr(fetcher, "blocked", ()))
         r = await fetcher.get(url)
-        if not r or r.status != 200 or not r.text:
-            continue
-        rec = find_seller_in_text(r.text, adsystem, seller_id, url)
-        if rec:
-            return rec
+        truncated = any("truncated" in why
+                        for _u, why in list(getattr(fetcher, "blocked", ()))[seen:])
+        if r and r.status == 200 and r.text:
+            rec = find_seller_in_text(r.text, adsystem, seller_id, url)
+            if rec:
+                return rec
+        if truncated:
+            rec = await _stream_at(fetcher, url, adsystem, seller_id)
+            if rec:
+                return rec
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Streaming lookup, for sellers.json documents too large to hold
+# --------------------------------------------------------------------------- #
+
+#: Ceiling for a streamed sellers.json. Google's is 104 MB uncompressed, so the
+#: ordinary 10 MB body cap truncated it and the payee could never be named.
+#: Nothing is retained in scan mode, so this bounds time, not memory.
+STREAM_MAX_BYTES = 512 * 1024 * 1024
+
+#: Bytes kept between chunks so a record split across a boundary is still found.
+#: sellers.json records are a few hundred bytes; this is generous.
+_WINDOW = 64 * 1024
+
+
+class _RecordScanner:
+    """Find one seller record in a stream, without holding the stream."""
+
+    def __init__(self, seller_id: str) -> None:
+        self._needle = f'"{seller_id}"'.encode()
+        self._buf = b""
+        self.record: str | None = None
+
+    def feed(self, chunk: bytes) -> None:
+        if self.record is not None:
+            return
+        self._buf += chunk
+        i = self._buf.find(self._needle)
+        if i != -1:
+            found = _enclosing_object(self._buf, i)
+            if found is not None:
+                self.record = found
+                self._buf = b""
+                return
+        if len(self._buf) > _WINDOW:
+            self._buf = self._buf[-_WINDOW:]
+
+
+def _enclosing_object(buf: bytes, pos: int) -> str | None:
+    """The JSON object containing ``pos``, or None if it is not complete yet."""
+    start = buf.rfind(b"{", 0, pos)
+    if start == -1:
+        return None
+    depth, in_str, esc = 0, False, False
+    for j in range(start, len(buf)):
+        c = buf[j : j + 1]
+        if esc:
+            esc = False
+            continue
+        if c == b"\\":
+            esc = True
+            continue
+        if c == b'"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c == b"{":
+            depth += 1
+        elif c == b"}":
+            depth -= 1
+            if depth == 0:
+                return buf[start : j + 1].decode("utf-8", errors="replace")
+    return None
+
+
+async def _stream_at(fetcher, url: str, adsystem: str, seller_id: str):
+    scanner = _RecordScanner(seller_id)
+    await fetcher.get(url, scanner=scanner.feed, scan_max_bytes=STREAM_MAX_BYTES)
+    if scanner.record is None:
+        return None
+    return find_seller_in_text('{"sellers":[' + scanner.record + "]}",
+                               adsystem, seller_id, url)
+
+
+async def stream_find_seller(fetcher, adsystem: str, seller_id: str):
+    """Look up one seller in a sellers.json of any size.
+
+    Streams the document, matches the record as it passes, and keeps only that
+    record. The retrieval stays evidenced: the fetcher records the byte count
+    and a SHA-256 taken over the stream.
+    """
+    return await _stream_at(fetcher, sellers_json_url(adsystem), adsystem, seller_id)

@@ -174,6 +174,8 @@ class Fetcher:
         # of the investigation wrote.
         self.url_policy = url_policy or UrlPolicy()
         self.blocked: list[tuple[str, str]] = []
+        #: byte count and digest of the last scan-mode retrieval
+        self.last_scan: dict | None = None
         # Content varies by the requester's apparent location, so the exit used
         # is part of the evidence rather than a transport detail. A capture
         # that does not record its egress is not reproducible even in
@@ -281,7 +283,19 @@ class Fetcher:
         headers: dict | None = None,
         allow_html: bool = False,
         egress: str = "",
+        scanner=None,
+        scan_max_bytes: int | None = None,
     ) -> Response | None:
+        """Fetch a URL under the full policy, SSRF and pinning guards.
+
+        ``scanner`` switches to SCAN MODE: each decoded chunk is handed to the
+        callable and the body is NOT retained. That is what makes a resource
+        too large to hold usable -- Google's sellers.json is 104 MB, and
+        buffering it would put that in memory, in the cache, and in every
+        evidence package. In scan mode the evidence records the byte count and
+        a SHA-256 computed over the stream, so the retrieval stays verifiable
+        without storing it.
+        """
         # Policy is evaluated BEFORE the cache is consulted. Serving a cached
         # body skipped the check entirely, so `robots_policy: respect` stopped
         # applying the moment a URL had been fetched once -- including by an
@@ -313,7 +327,12 @@ class Fetcher:
                     return None
 
         cp = self._cache_path(url, headers, egress)
-        if cp.exists():
+        # Scan mode must not be served from the cache. The cache holds whatever
+        # the capped read produced -- for an oversized body that is a TRUNCATED
+        # copy -- and a scan needs the live stream. Serving the cache here made
+        # the streaming lookup silently find nothing whenever the URL had been
+        # fetched once already.
+        if cp.exists() and scanner is None:
             d = json.loads(cp.read_text())
             # A cache hit still has to appear in this run's evidence package.
             # Otherwise a second run consumed retrieved content and produced a
@@ -375,7 +394,9 @@ class Fetcher:
                                           outcome="refused", note=note)
                     return None
 
-        result = await self._get_following_redirects(url, headers, egress=egress)
+        result = await self._get_following_redirects(
+            url, headers, egress=egress,
+            scanner=scanner, scan_max_bytes=scan_max_bytes)
         if result is None:
             self._record_evidence(url, None, b"", egress, outcome="error",
                                   note="no response")
@@ -472,7 +493,8 @@ class Fetcher:
                 "the evidence package misleading."
             ) from e
 
-    async def _read_capped(self, response) -> tuple[bytes, bool]:
+    async def _read_capped(self, response, scanner=None,
+                           cap: int | None = None) -> tuple[bytes, bool]:
         """Read a response body, stopping at ``max_bytes``.
 
         ``response.content`` materialises the entire body first, so a hostile
@@ -483,21 +505,44 @@ class Fetcher:
         The cap applies to bytes *after* transfer decoding, so a decompression
         bomb is bounded by the same limit.
         """
-        buf = bytearray()
+        cap = cap or self.max_bytes
+        if scanner is None:
+            buf = bytearray()
+            truncated = False
+            async for chunk in response.aiter_bytes():
+                remaining = self.max_bytes - len(buf)
+                if remaining <= 0:
+                    truncated = True
+                    break
+                buf.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    truncated = True
+                    break
+            return bytes(buf), truncated
+
+        # Scan mode: hand each chunk to the scanner and retain nothing. Memory
+        # stays flat regardless of body size, which is the whole point.
+        import hashlib
+
+        digest = hashlib.sha256()
+        seen = 0
         truncated = False
         async for chunk in response.aiter_bytes():
-            remaining = self.max_bytes - len(buf)
-            if remaining <= 0:
+            if seen + len(chunk) > cap:
+                chunk = chunk[: cap - seen]
                 truncated = True
+            digest.update(chunk)
+            seen += len(chunk)
+            scanner(chunk)
+            if truncated:
                 break
-            buf.extend(chunk[:remaining])
-            if len(chunk) > remaining:
-                truncated = True
-                break
-        return bytes(buf), truncated
+        self.last_scan = {"bytes": seen, "sha256": digest.hexdigest(),
+                          "truncated": truncated}
+        return b"", truncated
 
     async def _get_following_redirects(self, url: str, headers: dict | None,
-                                       max_hops: int = 5, egress: str = ""):
+                                       max_hops: int = 5, egress: str = "",
+                                       scanner=None, scan_max_bytes: int | None = None):
         """Follow redirects manually, validating every hop.
 
         Returns ``(status, body, encoding, truncated)``.
@@ -526,7 +571,8 @@ class Fetcher:
             try:
                 async with client.stream("GET", url, headers=headers) as r:
                     if r.status_code not in (301, 302, 303, 307, 308):
-                        body, truncated = await self._read_capped(r)
+                        body, truncated = await self._read_capped(
+                            r, scanner=scanner, cap=scan_max_bytes)
                         return (r.status_code, body, r.encoding, truncated, url,
                                 safe_headers(r.request.headers),
                                 safe_headers(r.headers))

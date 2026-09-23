@@ -6,6 +6,16 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-09-23
+
+- sellers.json documents larger than the body cap are now streamed and scanned
+  instead of truncated. Google's is 104 MB uncompressed, so the payee behind any
+  Google-monetised site could never be named — the ad system serving most
+  ad-funded sites. Only the matched record is kept; the retrieval stays
+  evidenced by a byte count and a SHA-256 taken over the stream.
+- Scan-mode retrievals bypass the cache, which would otherwise serve the
+  truncated copy left by an earlier ordinary fetch.
+
 ## [2.0.3] - 2026-09-23
 
 - One AdSense payee is now one node. `ca-pub-N` in page source and `pub-N` in

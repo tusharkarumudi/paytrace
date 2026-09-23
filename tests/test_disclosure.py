@@ -211,3 +211,41 @@ def test_wellknown_simhash_width_is_recorded_as_incompatible():
     assert WELLKNOWN_SIMHASH_BITS == 48
     assert SIMHASH_BITS != WELLKNOWN_SIMHASH_BITS
     assert len("d5d3d1c05307") * 4 == WELLKNOWN_SIMHASH_BITS
+
+
+# ---- a company name must not be assembled from page furniture -------------- #
+
+def test_a_contact_form_does_not_become_a_company():
+    """A real run reported `org_name:Name Email Message Inc` as the operator.
+
+    Tags were flattened to spaces, so the entity pattern — capitalised words
+    before a legal suffix — spanned a contact form's labels and a footer.
+    """
+    import re as _re
+
+    from paytrace.collectors.business import Imprint, _plausible_org_name
+
+    html = ("<form><label>Name</label><label>Email</label>"
+            "<label>Message</label></form>"
+            "<footer>Operated by Example Media Holdings Inc</footer>")
+    text = _re.sub(r"<[^>]+>", " | ", html)
+    text = _re.sub(r"[ \t\r\n]+", " ", text)
+    found = [h for h in dict.fromkeys(Imprint.ENTITY_RE.findall(text))
+             if _plausible_org_name(h)]
+    assert found == ["Example Media Holdings Inc"]
+
+
+def test_furniture_only_candidates_are_rejected():
+    from paytrace.collectors.business import _plausible_org_name
+
+    for junk in ("Name Email Message Inc", "Home Contact Ltd", "Privacy Terms GmbH"):
+        assert not _plausible_org_name(junk), junk
+
+
+def test_real_names_survive_the_guard():
+    """The guard must not eat names that merely contain a common word."""
+    from paytrace.collectors.business import _plausible_org_name
+
+    for real in ("Example Media Holdings Inc", "Contact Lens Group Ltd",
+                 "First Data Corporation Inc", "Home Retail Group Ltd"):
+        assert _plausible_org_name(real), real

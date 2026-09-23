@@ -6,6 +6,15 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-09-23
+
+- A company name can no longer be assembled from page furniture. HTML tags were
+  flattened to spaces, so the entity pattern spanned unrelated elements and a
+  contact form's labels plus a footer suffix produced
+  `org_name:Name Email Message Inc` — reported as if the site had named its
+  operator. Tags are now a boundary, and candidates made only of form and menu
+  words are rejected.
+
 ## [2.0.4] - 2026-09-23
 
 - sellers.json documents larger than the body cap are now streamed and scanned

@@ -366,6 +366,32 @@ class SecEdgar(Collector):
         return claims
 
 
+#: Words that are page furniture, not parts of a company name. A candidate made
+#: only of these is a form or a menu that happens to sit near a legal suffix.
+_FURNITURE = {
+    "name", "email", "message", "phone", "subject", "submit", "send", "search",
+    "home", "contact", "about", "privacy", "terms", "cookie", "cookies",
+    "login", "sign", "up", "in", "menu", "close", "accept", "read", "more",
+    "first", "last", "your", "the", "and", "our",
+}
+
+
+def _plausible_org_name(candidate: str) -> bool:
+    """Reject candidates built from page furniture.
+
+    The entity pattern takes capitalised words before a legal suffix, so a
+    contact form yielded "Name Email Message Inc" -- a company that does not
+    exist, reported as if the site had named its operator.
+    """
+    words = [w.strip(".,'\u2019-") for w in candidate.split()]
+    if len(words) < 2:
+        return False
+    body = [w for w in words[:-1] if w]
+    if not body:
+        return False
+    return not all(w.lower() in _FURNITURE for w in body)
+
+
 # --------------------------------------------------------------------------- #
 # Imprint / legal notice scraping (EU §5 TMG, DSA trader disclosure)
 # --------------------------------------------------------------------------- #
@@ -407,11 +433,16 @@ class Imprint(Collector):
             r = await self.fetcher.get(url, allow_html=True)
             if not r or r.status != 200 or len(r.text) < 200:
                 continue
-            text = re.sub(r"<[^>]+>", " ", r.text)
-            text = re.sub(r"\s+", " ", text)[:40_000]
+            # Tags become a BOUNDARY, not a space. Flattening them to spaces
+            # let a name span unrelated elements: a contact form's labels and a
+            # footer suffix merged into "Name Email Message Inc".
+            text = re.sub(r"<[^>]+>", " | ", r.text)
+            text = re.sub(r"[ \t\r\n]+", " ", text)[:40_000]
             group = f"imprint|{ident.value}|{path}"
 
             for m in dict.fromkeys(self.ENTITY_RE.findall(text)):
+                if not _plausible_org_name(m):
+                    continue
                 claims.append(self.claim(
                     ident, Predicate.LEGAL_NAME,
                     Identifier(IdKind.ORG_NAME, m.strip()), url,

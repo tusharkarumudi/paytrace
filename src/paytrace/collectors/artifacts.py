@@ -76,10 +76,14 @@ _STAGING = re.compile(
 
 #: Service identifier schemes worth extracting from source. Each is a pivot.
 _SERVICE_IDS = {
-    "adsense": re.compile(r"\b(pub-\d{16})\b"),
+    # Digits only, matching analytics.py: the `pub-` prefix is spelling, not
+    # identity. Keeping it here made one payee two nodes.
+    "adsense": re.compile(r"\b(?:ca-)?pub-(\d{16})\b"),
     "ga4": re.compile(r"\b(G-[A-Z0-9]{8,12})\b"),
-    "ua": re.compile(r"\b(UA-\d{4,10}-\d{1,4})\b"),
-    "gtm": re.compile(r"\b(GTM-[A-Z0-9]{6,8})\b"),
+    # The ACCOUNT part only, matching analytics.py. UA-1234-1 and UA-1234-2 are
+    # two properties of one account; keeping the suffix split them.
+    "ua": re.compile(r"\b(UA-\d{4,10})-\d{1,4}\b"),
+    "gtm": re.compile(r"\b(GTM-[A-Z0-9]{5,9})\b"),
     "fbpixel": re.compile(r"fbq\(['\"]init['\"],\s*['\"](\d{15,16})['\"]"),
     "hotjar": re.compile(r"hjid[:=]\s*(\d{6,8})"),
     "intercom": re.compile(r"app_id[\"']?\s*[:=]\s*[\"']([a-z0-9]{8})[\"']"),

@@ -6,6 +6,16 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-09-23
+
+- One AdSense payee is now one node. `ca-pub-N` in page source and `pub-N` in
+  ads.txt were captured in different shapes by different collectors, so a single
+  account became two graph nodes with its evidence divided between them — on a
+  real domain the same ID resolved STRONG_EVIDENCE under one spelling and
+  UNSUPPORTED under the other. The `adsense_pub` scheme is gone with it.
+- UA identifiers now key on the account (`UA-1234`), not the property
+  (`UA-1234-2`), in every collector.
+
 ## [2.0.2] - 2026-09-22
 
 - `paytrace run` no longer crashes on a real network. It closed its HTTP

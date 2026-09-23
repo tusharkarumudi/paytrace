@@ -200,3 +200,42 @@ async def test_staging_subdomains_become_pivots():
     claims = list(await c.collect(Identifier(IdKind.DOMAIN, "x.example")))
     subs = [x.object.value for x in claims if x.object.kind is IdKind.DOMAIN]
     assert "staging.realsite.example" in subs
+
+
+# ---- one identifier, one node --------------------------------------------- #
+
+def test_collectors_agree_on_the_canonical_identifier():
+    """`ca-pub-N` in page source and `pub-N` in ads.txt are one payee account.
+
+    Two collectors captured it in different shapes — digits in one, `pub-`
+    included in the other — so a single account became two graph nodes. Its
+    evidence was split between them, and on a real domain the same ID came out
+    STRONG_EVIDENCE under one spelling and UNSUPPORTED under the other.
+    """
+    from paytrace.collectors.analytics import ID_PATTERNS
+    from paytrace.collectors.artifacts import _SERVICE_IDS
+
+    digits = "5446113378742009"
+    for text in (f'src="//x/adsbygoogle.js?client=ca-pub-{digits}"',
+                 f"google.com, pub-{digits}, DIRECT"):
+        a = ID_PATTERNS["adsense"][0].search(text)
+        b = _SERVICE_IDS["adsense"].search(text)
+        assert a and b and a.group(1) == b.group(1) == digits, text
+
+
+def test_ua_identifiers_use_the_account_not_the_property():
+    """UA-1234-1 and UA-1234-2 are two properties of one account. Keeping the
+    property suffix in one collector and not the other split the account."""
+    from paytrace.collectors.analytics import ID_PATTERNS
+    from paytrace.collectors.artifacts import _SERVICE_IDS
+
+    for pattern in (ID_PATTERNS["ua"][0], _SERVICE_IDS["ua"]):
+        assert pattern.search("UA-12345678-3").group(1) == "UA-12345678"
+
+
+def test_no_second_scheme_name_for_one_service():
+    """`adsense_pub` was a separate scheme for the same accounts, which splits
+    a payee by scheme name rather than by value."""
+    from paytrace.collectors.analytics import ID_PATTERNS
+
+    assert "adsense_pub" not in ID_PATTERNS

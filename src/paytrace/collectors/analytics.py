@@ -37,10 +37,12 @@ from .base import Collector, register
 # above infrastructure.
 
 ID_PATTERNS: dict[str, tuple[re.Pattern, Reliability]] = {
-    # ca-pub-XXXXXXXXXXXXXXXX -- one AdSense payee account
-    "adsense": (re.compile(r"\bca-pub-(\d{16})\b"), Reliability.AUTHORITATIVE),
-    # pub-XXXXXXXXXXXXXXXX in ads.txt context
-    "adsense_pub": (re.compile(r"\bpub-(\d{16})\b"), Reliability.AUTHORITATIVE),
+    # One AdSense payee account, written `ca-pub-N` in page source and `pub-N`
+    # in ads.txt. ONE pattern, capturing the digits: two patterns under two
+    # scheme names split one payee into separate graph nodes, so its evidence
+    # was divided and the same ID could come out STRONG_EVIDENCE under one
+    # spelling and UNSUPPORTED under the other.
+    "adsense": (re.compile(r"\b(?:ca-)?pub-(\d{16})\b"), Reliability.AUTHORITATIVE),
     # G-XXXXXXXXXX GA4 measurement
     "ga4": (re.compile(r"\b(G-[A-Z0-9]{8,12})\b"), Reliability.STRONG),
     # UA-XXXXXXXX-N legacy Universal Analytics; the account part is UA-XXXXXXXX

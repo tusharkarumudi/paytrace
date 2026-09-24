@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.18] - 2026-09-24
+
+- A bare legal suffix is no longer sent to a company register. Searching GLEIF
+  for "INC" or "LLC" returns whichever company is literally called that — a
+  French firm named "INC", a Belgian one named "LLC" — and they were resolved
+  as entities of the case beside the real subject.
+
 ## [2.0.17] - 2026-09-24
 
 - Seller ids are matched case-insensitively in the stream scanner. A file

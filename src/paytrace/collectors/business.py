@@ -117,6 +117,30 @@ class AdsTxtOwner(Collector):
         return claims
 
 
+#: Legal-form tokens. A candidate made only of these is not a company name.
+_LEGAL_FORMS = {
+    "inc", "llc", "ltd", "limited", "corp", "corporation", "co", "company",
+    "gmbh", "ag", "sa", "sarl", "bv", "nv", "plc", "llp", "pte", "pvt", "oy",
+    "ab", "aps", "sia", "srl", "spa", "kg", "ug", "as", "oyj", "kft", "doo",
+    "the", "and",
+}
+
+
+def searchable_org_name(name: str) -> bool:
+    """Is this worth sending to a company register?
+
+    A bare legal suffix is not a name. Searching GLEIF for "INC" or "LLC"
+    returns whichever company is literally called that -- a French firm named
+    "INC", a Belgian one named "LLC" -- and those were being resolved as
+    entities of the case.
+    """
+    import re as _re
+
+    tokens = _re.findall(r"[A-Za-z0-9&]+", name or "")
+    core = [t for t in tokens if t.lower().strip(".") not in _LEGAL_FORMS]
+    return len("".join(core)) >= 3
+
+
 #: DIRECT alone means nothing; the class does the work.
 _RELIABILITY_BY_CLASS = {
     "publisher_account": Reliability.STRONG,
@@ -219,6 +243,8 @@ class Gleif(Collector):
             data = await self.fetcher.get_json(url)
             records = [data["data"]] if data and "data" in data else []
         else:
+            if not searchable_org_name(ident.value):
+                return []
             url = (
                 f"{self.BASE}/lei-records?filter[entity.legalName]="
                 f"{ident.value.replace(' ', '%20')}&page[size]=5"

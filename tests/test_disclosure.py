@@ -299,3 +299,24 @@ def test_a_denial_does_not_reach_across_elements():
     assert _names_from(
         "<p>Not affiliated with anyone.</p><p>Example Media Holdings Inc</p>"
     ) == ["Example Media Holdings Inc"]
+
+
+# ---- a bare legal suffix is not a company name ----------------------------- #
+
+def test_a_legal_suffix_is_not_searched_in_a_register():
+    """Searching GLEIF for "INC" or "LLC" returns whichever company is
+    literally called that — a French firm named "INC", a Belgian one named
+    "LLC" — and those were resolved as entities of the case, alongside the
+    real subject."""
+    from paytrace.collectors.business import searchable_org_name
+
+    for junk in ("INC", "LLC", "Inc.", "Ltd", "Limited", "The Company", "A"):
+        assert not searchable_org_name(junk), junk
+
+
+def test_real_company_names_are_still_searched():
+    from paytrace.collectors.business import searchable_org_name
+
+    for real in ("AccuWeather, Inc.", "Relabe LLC", "Kredi Uzman",
+                 "Intercept Interactive Inc.", "Cyber Media (India) Ltd."):
+        assert searchable_org_name(real), real

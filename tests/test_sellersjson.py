@@ -239,7 +239,7 @@ def test_oversized_sellers_json_is_streamed_and_resolved(monkeypatch):
 
     async def go():
         f = net.Fetcher(user_agent="t")
-        rec = await resolve_seller(f, "google.com", "pub-5446113378742009")
+        rec = await resolve_seller(f, "adnet.example", "pub-5446113378742009")
         scan = f.last_scan
         await f.aclose()
         return rec, scan
@@ -289,7 +289,7 @@ def test_a_recovered_truncation_is_not_reported_as_blocked(monkeypatch):
 
     async def go():
         f = net.Fetcher(user_agent="t")
-        rec = await resolve_seller(f, "google.com", "pub-1")
+        rec = await resolve_seller(f, "adnet.example", "pub-1")
         blocked = list(f.blocked)
         await f.aclose()
         return rec, blocked
@@ -322,10 +322,8 @@ def test_a_failed_read_falls_back_to_streaming(monkeypatch):
 
     def handler(req):
         if req.url.path == "/robots.txt":
-            body = ("User-agent: *\nDisallow: /sellers.json\n"
-                    if req.url.host == "google.com" else "User-agent: *\nAllow: /\n")
-            return httpx.Response(200, text=body)
-        if "adx-rtb-dictionaries" in req.url.path:
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        if req.url.path.endswith("sellers.json"):
             attempts["n"] += 1
             if attempts["n"] == 1:
                 raise httpx.ReadTimeout("simulated timeout on a very large body")
@@ -346,7 +344,7 @@ def test_a_failed_read_falls_back_to_streaming(monkeypatch):
 
     async def go():
         f = net.Fetcher(user_agent="t")
-        rec = await resolve_seller(f, "google.com", "pub-544")
+        rec = await resolve_seller(f, "adnet.example", "pub-544")
         await f.aclose()
         return rec
 
@@ -384,7 +382,7 @@ def test_an_unusable_response_is_recorded_not_skipped(monkeypatch):
 
     async def go():
         f = net.Fetcher(user_agent="t")
-        rec = await resolve_seller(f, "google.com", "pub-1")
+        rec = await resolve_seller(f, "adnet.example", "pub-1")
         blocked = list(f.blocked)
         await f.aclose()
         return rec, blocked
@@ -393,8 +391,8 @@ def test_an_unusable_response_is_recorded_not_skipped(monkeypatch):
     assert rec is None
     assert blocked, "an unusable response must be recorded"
     assert any("HTTP 403" in why for _u, why in blocked), blocked
-    assert any("storage.googleapis.com" in u for u, _w in blocked), \
-        "the known location must appear, so it is visible that it was tried"
+    assert any("adnet.example" in u for u, _w in blocked), \
+        "the location tried must be visible"
 
 
 def test_a_known_location_is_the_only_one_tried():
@@ -621,3 +619,78 @@ def test_sovrn_publishes_at_lijit():
     from paytrace.sellersjson import candidate_urls
 
     assert candidate_urls("sovrn.com") == ["https://lijit.com/sellers.json"]
+
+
+def test_a_publisher_id_matches_whatever_spelling_the_file_uses():
+    """ads.txt writes `pub-1234…`; a sellers.json may publish the bare digits.
+    Comparing the strings exactly reported a publisher that IS in Google's file
+    as "checked and absent" — which reads as a finding rather than a miss."""
+    import json as _json
+
+    from paytrace.sellersjson import _RecordScanner, find_seller_in_text
+
+    for stored in ("pub-8130782205865473", "8130782205865473",
+                   "ca-pub-8130782205865473"):
+        doc = _json.dumps({"sellers": [{"seller_id": stored, "name": "Tabi Cam Ltd",
+                                        "domain": "tabi.cam",
+                                        "seller_type": "PUBLISHER"}]})
+        rec = find_seller_in_text(doc, "google.com", "pub-8130782205865473")
+        assert rec and rec.name == "Tabi Cam Ltd", stored
+        scanner = _RecordScanner("pub-8130782205865473")
+        scanner.feed(doc.encode())
+        assert scanner.record, f"stream missed {stored}"
+
+
+def test_a_large_sellers_json_is_downloaded_once_and_reused(monkeypatch, tmp_path):
+    """Google's sellers.json is 104 MB and was re-fetched for every account an
+    ads.txt declares — slow, easy to time out, and the cause of a lookup
+    reporting "absent" when the transfer had merely failed."""
+    import asyncio
+    import importlib
+    import json as _json
+
+    import httpx
+
+    monkeypatch.setenv("PAYTRACE_SELLERS_CACHE", str(tmp_path))
+    import paytrace.net as net
+    import paytrace.sellersjson as sj
+    importlib.reload(sj)
+
+    target = _json.dumps({"seller_id": "pub-8130782205865473",
+                          "name": "Tabi Cam Ltd", "domain": "tabi.cam",
+                          "seller_type": "PUBLISHER"})
+    doc = ('{"sellers":['
+           + ",".join(_json.dumps({"seller_id": str(i), "name": "F" * 60})
+                      for i in range(5000))
+           + "," + target + "]}").encode()
+    downloads = {"n": 0}
+
+    def handler(req):
+        if req.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        downloads["n"] += 1
+        return httpx.Response(200, content=doc,
+                              headers={"content-type": "application/json"})
+
+    original = net.Fetcher.__init__
+
+    def patched(self, *a, **k):
+        k["resolver"] = lambda host: ["93.184.216.34"]
+        original(self, *a, **k)
+        for route in self.egress.egresses:
+            self._clients[route.label] = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(net.Fetcher, "__init__", patched)
+
+    async def go():
+        f = net.Fetcher(user_agent="t")
+        found = [await sj.resolve_seller(f, "google.com", "pub-8130782205865473")
+                 for _ in range(3)]
+        await f.aclose()
+        return found
+
+    found = asyncio.run(go())
+    assert all(r and r.name == "Tabi Cam Ltd" for r in found)
+    assert downloads["n"] == 1, f"one transfer for three lookups, got {downloads['n']}"
+    importlib.reload(sj)

@@ -39,8 +39,12 @@ finding, and often the terminus.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import pathlib
 import re
+import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -205,6 +209,33 @@ def _record_from_obj(adsystem: str, obj: dict, source_url: str) -> SellerRecord:
 # Lookup
 # --------------------------------------------------------------------------- #
 
+def seller_id_forms(seller_id: str) -> list[str]:
+    """Every spelling of one publisher account.
+
+    ads.txt writes `pub-1234…`; a sellers.json may publish the bare digits, or
+    `ca-pub-…`. Comparing the strings exactly meant a publisher present in
+    Google's file was reported "checked and absent", which reads as a finding.
+    """
+    raw = str(seller_id).strip()
+    bare = re.sub(r"^(?:ca-)?pub-", "", raw, flags=re.I)
+    # Only a full 16-digit AdSense publisher id is treated as equivalent to its
+    # bare digits. Stripping the prefix from anything shorter would make
+    # `pub-1` match a seller whose id is literally `1`.
+    if bare == raw or not (bare.isdigit() and len(bare) == 16):
+        return [raw]
+    return [raw, bare, f"pub-{bare}", f"ca-pub-{bare}"][:4]
+
+
+def same_seller(a: str, b: str) -> bool:
+    """Do two seller ids denote the same account?"""
+    def norm(value: str) -> str:
+        text = str(value).strip()
+        bare = re.sub(r"^(?:ca-)?pub-", "", text, flags=re.I)
+        return (bare if bare.isdigit() and len(bare) == 16 else text).lower()
+
+    return norm(a) == norm(b)
+
+
 def find_seller_in_text(body: str, adsystem: str, seller_id: str,
                         source_url: str = "") -> SellerRecord | None:
     """Locate one seller without parsing the whole document.
@@ -225,13 +256,14 @@ def find_seller_in_text(body: str, adsystem: str, seller_id: str,
             data = None
         if isinstance(data, dict):
             for s in data.get("sellers", []):
-                if str(s.get("seller_id", "")) == str(seller_id):
+                if same_seller(s.get("seller_id", ""), seller_id):
                     return _record_from_obj(adsystem, s, source_url)
             return None
 
     # Streaming path: find the id, then bracket-match the object around it.
     needle = '"seller_id"'
-    for m in re.finditer(re.escape(str(seller_id)), body):
+    pattern = "|".join(re.escape(f) for f in seller_id_forms(seller_id))
+    for m in re.finditer(pattern, body):
         start = body.rfind("{", 0, m.start())
         if start == -1:
             continue
@@ -268,6 +300,33 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str,
     majority of ad-funded sites.
     """
     absent_at: list[str] = []
+
+    # Very large documents go through a local copy: one download per day reused
+    # across every account in an ads.txt, instead of one 104 MB transfer per
+    # seller. This is also what stops a failed transfer being reported as the
+    # seller being absent.
+    if adsystem.lower() in LARGE_SELLERS_JSON:
+        url = sellers_json_url(adsystem)
+        path = await cached_document(fetcher, url)
+        if path is not None:
+            rec = find_in_file(path, adsystem, seller_id, url)
+            if rec:
+                return rec
+            if hasattr(fetcher, "checked_absent"):
+                age = int(time.time() - path.stat().st_mtime)
+                fetcher.checked_absent.append(
+                    (url, f"checked and absent: seller {seller_id} is not in the "
+                          f"local copy ({path.stat().st_size} bytes, {age}s old)"))
+            absent_at.append(url)
+            if not archive:
+                return None
+        elif hasattr(fetcher, "blocked"):
+            # No local copy AND the download did not complete: fall through to
+            # the ordinary candidate loop rather than giving up. Returning here
+            # skipped the live attempt entirely.
+            fetcher.blocked.append(
+                (url, "no local copy; falling back to a direct fetch"))
+
     for url in candidate_urls(adsystem):
         seen = len(getattr(fetcher, "blocked", ()))
         r = await fetcher.get(url)
@@ -353,7 +412,7 @@ class _RecordScanner:
     """Find one seller record in a stream, without holding the stream."""
 
     def __init__(self, seller_id: str) -> None:
-        self._needle = f'"{seller_id}"'.encode()
+        self._needles = [f'"{f}"'.encode() for f in seller_id_forms(seller_id)]
         self._buf = b""
         self.record: str | None = None
 
@@ -361,7 +420,8 @@ class _RecordScanner:
         if self.record is not None:
             return
         self._buf += chunk
-        i = self._buf.find(self._needle)
+        hits = [i for i in (self._buf.find(n) for n in self._needles) if i != -1]
+        i = min(hits) if hits else -1
         if i != -1:
             found = _enclosing_object(self._buf, i)
             if found is not None:
@@ -448,3 +508,68 @@ async def archived_seller(fetcher, url: str, adsystem: str, seller_id: str):
             return find_seller_in_text('{"sellers":[' + scanner.record + "]}",
                                        adsystem, seller_id, snapshot)
     return None
+
+# --------------------------------------------------------------------------- #
+# Local copies of the very large sellers.json documents
+# --------------------------------------------------------------------------- #
+
+#: Where downloaded sellers.json documents are kept. Google's is 104 MB and
+#: every seller lookup re-fetched it: slow, easy to time out, and the cause of
+#: a lookup reporting "absent" when the transfer merely failed. One copy per
+#: run, reused across the dozens of accounts an ads.txt declares.
+SELLERS_CACHE_DIR = pathlib.Path(
+    os.environ.get("PAYTRACE_SELLERS_CACHE",
+                   pathlib.Path.home() / ".cache" / "paytrace" / "sellers"))
+
+#: How long a downloaded copy stays usable before a refresh is attempted.
+SELLERS_CACHE_TTL = 24 * 3600
+
+
+def _cache_path(url: str) -> pathlib.Path:
+    return SELLERS_CACHE_DIR / (hashlib.sha256(url.encode()).hexdigest()[:16] + ".json")
+
+
+async def cached_document(fetcher, url: str) -> pathlib.Path | None:
+    """The local copy of a sellers.json, refreshed when possible.
+
+    A refresh that fails leaves the previous copy in place and returns it: a
+    stale answer with known provenance beats no answer, and the report records
+    the file's age.
+    """
+    path = _cache_path(url)
+    if path.exists() and time.time() - path.stat().st_mtime < SELLERS_CACHE_TTL:
+        return path
+
+    SELLERS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    part = path.with_suffix(".part")
+    try:
+        with open(part, "wb") as sink:
+            await fetcher.get(url, scanner=sink.write,
+                              scan_max_bytes=STREAM_MAX_BYTES)
+        if part.stat().st_size > 1024:
+            part.replace(path)
+            return path
+    except OSError:
+        pass
+    finally:
+        if part.exists():
+            part.unlink(missing_ok=True)
+    return path if path.exists() else None      # stale copy, or nothing
+
+
+def find_in_file(path: pathlib.Path, adsystem: str, seller_id: str,
+                 source_url: str):
+    """Scan a local sellers.json without loading it into memory."""
+    scanner = _RecordScanner(seller_id)
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                break
+            scanner.feed(chunk)
+            if scanner.record:
+                break
+    if not scanner.record:
+        return None
+    return find_seller_in_text('{"sellers":[' + scanner.record + "]}",
+                               adsystem, seller_id, source_url)

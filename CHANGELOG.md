@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.16] - 2026-09-24
+
+- Very large sellers.json documents are kept as a local copy (one download a
+  day, refreshed when possible, stale copy used if a refresh fails) instead
+  of a 104 MB transfer per seller. That was slow, easy to time out, and the
+  cause of a lookup reporting "absent" when the transfer had merely failed.
+  Set `PAYTRACE_SELLERS_CACHE` to move it.
+
+## [2.0.15] - 2026-09-23
+
+- A publisher account now matches whatever spelling the sellers.json uses.
+  ads.txt writes `pub-1234…`; a file may publish the bare digits or
+  `ca-pub-…`, and an exact string comparison reported an account that IS in
+  Google's file as "checked and absent" — a miss presented as a finding.
+  Only full 16-digit publisher ids are treated as equivalent to their bare
+  digits, so `pub-1` cannot match a seller whose id is literally `1`.
+
 ## [2.0.14] - 2026-09-23
 
 - The archived sellers.json search is now opt-in (`resolve_seller(...,

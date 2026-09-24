@@ -6,6 +6,17 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.19] - 2026-09-24
+
+- A register result must be the company that was asked about. GLEIF's
+  `filter[entity.legalName]` is a PARTIAL match, so a query for
+  "AccuWeather Intl., LLC" returned up to five records merely containing part of
+  it — a French company named "LLC", "Gold Flake Court, LLC LLC", "Pruvations
+  Inc 401K Inc" — and every one was accepted as a claim and resolved as an
+  entity of the case. Results are now matched on their distinctive words, with
+  legal forms ignored, so "AccuWeather" still matches "AccuWeather Inc" while
+  "GITHUB INDIA PRIVATE LIMITED" no longer matches "GitHub".
+
 ## [2.0.18] - 2026-09-24
 
 - A bare legal suffix is no longer sent to a company register. Searching GLEIF

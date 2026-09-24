@@ -320,3 +320,33 @@ def test_real_company_names_are_still_searched():
     for real in ("AccuWeather, Inc.", "Relabe LLC", "Kredi Uzman",
                  "Intercept Interactive Inc.", "Cyber Media (India) Ltd."):
         assert searchable_org_name(real), real
+
+
+def test_a_register_result_must_be_the_company_asked_about():
+    """GLEIF's `filter[entity.legalName]` is a PARTIAL match. Asking for
+    "AccuWeather Intl., LLC" returned records merely containing part of it — a
+    French company named "LLC", "Gold Flake Court, LLC LLC", "Pruvations Inc
+    401K Inc" — and every one was accepted as a claim and resolved as an entity
+    of the case beside the real subject."""
+    from paytrace.collectors.business import gleif_record_matches
+
+    for junk in ("LLC", "INC", "Gold Flake Court, LLC LLC", "INC Group Inc.",
+                 "Pruvations Inc 401K Inc", "Gazelle.ia Inc. / Gazelle.ai Inc."):
+        assert not gleif_record_matches("AccuWeather Intl., LLC", junk), junk
+
+
+def test_the_right_company_still_matches_across_legal_forms():
+    from paytrace.collectors.business import gleif_record_matches
+
+    assert gleif_record_matches("AccuWeather, Inc.", "AccuWeather, Inc.")
+    assert gleif_record_matches("AccuWeather", "AccuWeather Inc")
+    assert gleif_record_matches("Intercept Interactive Inc.",
+                                "Intercept Interactive Inc.")
+
+
+def test_a_subsidiary_is_not_the_parent():
+    """A prefix rule would admit "GITHUB INDIA PRIVATE LIMITED" for "GitHub"."""
+    from paytrace.collectors.business import gleif_record_matches
+
+    assert gleif_record_matches("GitHub", "GITHUB INC")
+    assert not gleif_record_matches("GitHub", "GITHUB INDIA PRIVATE LIMITED")

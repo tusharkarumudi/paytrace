@@ -694,3 +694,22 @@ def test_a_large_sellers_json_is_downloaded_once_and_reused(monkeypatch, tmp_pat
     assert all(r and r.name == "Tabi Cam Ltd" for r in found)
     assert downloads["n"] == 1, f"one transfer for three lookups, got {downloads['n']}"
     importlib.reload(sj)
+
+
+def test_a_mixed_case_seller_id_is_still_found():
+    """Seller ids are opaque strings: a file publishes `6tFvXWWAp9RZaZhG3`
+    while the identifier has been normalised to lower case. The byte scanner
+    searched case-sensitively, missed the record, and reported it absent."""
+    import json as _json
+
+    from paytrace.sellersjson import _RecordScanner, find_seller_in_text
+
+    doc = _json.dumps({"sellers": [{"seller_id": "6tFvXWWAp9RZaZhG3",
+                                    "name": "Kredi Uzman",
+                                    "domain": "krediuzman.com",
+                                    "seller_type": "PUBLISHER"}]})
+    for probe in ("6tFvXWWAp9RZaZhG3", "6tfvxwwap9rzazhg3", "6TFVXWWAP9RZAZHG3"):
+        assert find_seller_in_text(doc, "relabe.com", probe).name == "Kredi Uzman"
+        scanner = _RecordScanner(probe)
+        scanner.feed(doc.encode())
+        assert scanner.record, f"stream missed {probe}"

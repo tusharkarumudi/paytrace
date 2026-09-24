@@ -6,6 +6,12 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.17] - 2026-09-24
+
+- Seller ids are matched case-insensitively in the stream scanner. A file
+  publishes `6tFvXWWAp9RZaZhG3` while the identifier is normalised to lower
+  case, so an exact byte search missed the record and reported it absent.
+
 ## [2.0.16] - 2026-09-24
 
 - Very large sellers.json documents are kept as a local copy (one download a

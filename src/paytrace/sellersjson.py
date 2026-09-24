@@ -412,7 +412,11 @@ class _RecordScanner:
     """Find one seller record in a stream, without holding the stream."""
 
     def __init__(self, seller_id: str) -> None:
-        self._needles = [f'"{f}"'.encode() for f in seller_id_forms(seller_id)]
+        # Case-insensitive: seller ids are opaque strings and a file may publish
+        # `6tFvXWWAp9RZaZhG3` while the identifier has been normalised to lower
+        # case. An exact byte search missed the record and reported it absent.
+        self._needles = [f'"{f}"'.lower().encode()
+                         for f in seller_id_forms(seller_id)]
         self._buf = b""
         self.record: str | None = None
 
@@ -420,7 +424,8 @@ class _RecordScanner:
         if self.record is not None:
             return
         self._buf += chunk
-        hits = [i for i in (self._buf.find(n) for n in self._needles) if i != -1]
+        haystack = self._buf.lower()
+        hits = [i for i in (haystack.find(n) for n in self._needles) if i != -1]
         i = min(hits) if hits else -1
         if i != -1:
             found = _enclosing_object(self._buf, i)

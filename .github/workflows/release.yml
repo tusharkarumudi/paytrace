@@ -124,7 +124,7 @@ jobs:
         # tested == signed == published -- and bypasses the clean-install gate
         # entirely. PyPI's Trusted Publishing guidance says the publishing job
         # should retrieve distributions from a separate build job.
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: dist-${{ github.ref_name }}
           # dist/ only. runtime-requirements.txt is produced in the RELEASE job

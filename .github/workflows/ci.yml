@@ -2,6 +2,9 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request: { branches: [main] }
+  schedule:
+    - cron: "17 6 * * *"          # daily, so live breakage surfaces within a day
+  workflow_dispatch:
 
 jobs:
   test:
@@ -225,3 +228,31 @@ jobs:
             echo "::error::placeholder OWNER references remain in release metadata"
             exit 1
           fi
+
+  # Live network tests. Every live-only defect this project shipped was
+  # invisible to the mocked suite: a client closed from a second event loop, a
+  # swallowed transport error, a non-200 skipped in silence, an id compared
+  # case-sensitively. Mocks do not time out, do not return 403 and hold no
+  # connections.
+  #
+  # Scheduled and manual, NOT on push: a third-party outage must not block a
+  # merge. It is meant to fail loudly when it fails.
+  live:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with: { python-version: "3.12" }
+      - name: Install
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          for repo in attribution-graph paytrace handle-correlation attribution-suite; do
+            [ -d "../$repo" ] && pip install -e "../$repo"
+          done
+          pip install -e .
+          pip install pytest pytest-asyncio
+      - name: Live tests
+        run: pytest -m network -q

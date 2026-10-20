@@ -4,6 +4,17 @@
 [![PyPI](https://img.shields.io/pypi/v/paytrace.svg)](https://pypi.org/project/paytrace/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+> **New here? Start with the suite.** One install, one command:
+>
+> ```bash
+> pip install attribution-suite
+> attribution-suite --domain example.com
+> ```
+>
+> It runs this package for you and prints who is paid for a site. Run
+> `attribution doctor` first if anything looks wrong. This README covers the
+> package itself, for people wiring it into something of their own.
+
 Attribute websites to the legal entities that get paid for them.
 
 25 collectors for [attribution-graph](https://github.com/tusharkarumudi/attribution-graph),

@@ -304,6 +304,9 @@ class AgentRun:
     invariants: PlanInvariants = field(default_factory=PlanInvariants)
     conclusion: str = ""
     conclusion_source: str = ""
+    #: Set when the planner failed mid-run: the investigation keeps what it
+    #: collected instead of being discarded.
+    planner_error: str = ""
     findings: list[Any] = field(default_factory=list)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -330,7 +333,16 @@ class Agent:
         context: list[str] = []
 
         for n in range(1, max_steps + 1):
-            decision = self.brain.decide(goal, context, self.toolbox.names())
+            try:
+                decision = self.brain.decide(goal, context, self.toolbox.names())
+            except Exception as e:
+                # An API or transport error must not discard an investigation
+                # that has already collected evidence. Stop planning, keep what
+                # was gathered, and say why in the record.
+                run.trail.add(f"planner unavailable after step {n - 1}: "
+                              f"{type(e).__name__}: {e}")
+                run.planner_error = f"{type(e).__name__}: {e}"
+                break
 
             if decision.action == "finish":
                 run.conclusion = decision.conclusion

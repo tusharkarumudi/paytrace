@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.22] - 2026-09-27
+
+- A planner error no longer discards an investigation that has already
+  collected evidence: the run stops planning, keeps what it gathered, and
+  records `planner_error`.
+- README points first-time readers at the suite.
+
+## [2.0.21] - 2026-09-25
+
+- Live network tests (`pytest -m network`), run by a scheduled CI job. Every
+  live-only defect this project shipped was invisible to the mocked suite:
+  mocks do not time out, do not return 403 and hold no connections.
+
+## [2.0.20] - 2026-09-25
+
+- Every blocked retrieval is attributed to the collector that asked for it.
+  A run reporting 378 blocked could not say which of 36 collectors produced
+  nothing — two have been dead in every run.
+
 ## [2.0.19] - 2026-09-24
 
 - A register result must be the company that was asked about. GLEIF's

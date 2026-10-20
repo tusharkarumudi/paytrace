@@ -174,6 +174,10 @@ class Fetcher:
         # of the investigation wrote.
         self.url_policy = url_policy or UrlPolicy()
         self.blocked: list[tuple[str, str]] = []
+        #: How many retrievals each collector lost, by collector name.
+        #: A run reporting 378 blocked could not say WHICH of 36
+        #: collectors never worked — two have been dead in every run.
+        self.blocked_by_collector: dict[str, int] = {}
         #: Retrievals that COMPLETED and found nothing. A negative result is
         #: not a blocked fetch: filing it under `blocked` inflated the blocked
         #: count, forced the result INCOMPLETE, and blurred the one distinction
@@ -282,6 +286,13 @@ class Fetcher:
         ).hexdigest()
         return self.cache_dir / f"{key}.json"
 
+
+    def note_block(self, url: str, reason: str) -> None:
+        """Record a lost retrieval against the collector that asked for it."""
+        self.blocked.append((url, reason))
+        who = CURRENT_COLLECTOR.get() or "unknown"
+        self.blocked_by_collector[who] = self.blocked_by_collector.get(who, 0) + 1
+
     async def get(
         self,
         url: str,
@@ -326,7 +337,7 @@ class Fetcher:
                 self.policy_decisions.append(decision)
                 if not decision.should_fetch:
                     note = getattr(decision, "note", "") or "disallowed by policy"
-                    self.blocked.append((url, f"fetch policy: {note}"))
+                    self.note_block(url, f"fetch policy: {note}")
                     self._record_evidence(url, None, b"", egress,
                                           outcome="refused", note=note)
                     return None
@@ -372,7 +383,7 @@ class Fetcher:
         try:
             self.pins.approve(url)
         except UrlRejected as e:
-            self.blocked.append((url, e.reason))
+            self.note_block(url, e.reason)
             return None
 
         # Fetch policy.
@@ -394,7 +405,7 @@ class Fetcher:
                 self.policy_decisions.append(decision)
                 if not decision.should_fetch:
                     note = getattr(decision, "note", "") or "disallowed by policy"
-                    self.blocked.append((url, f"fetch policy: {note}"))
+                    self.note_block(url, f"fetch policy: {note}")
                     self._record_evidence(url, None, b"", egress,
                                           outcome="refused", note=note)
                     return None
@@ -427,7 +438,7 @@ class Fetcher:
             return Response(final_url, status, "")
 
         if truncated:
-            self.blocked.append((url, f"body truncated at {self.max_bytes} bytes"))
+            self.note_block(url, f"body truncated at {self.max_bytes} bytes")
         text = raw.decode(encoding or "utf-8", errors="replace")
 
         # A TRUNCATED body is never cached. Caching it poisoned every later
@@ -475,7 +486,7 @@ class Fetcher:
         except Exception as e:
             # A policy failure must not silently become "allowed": record it
             # and continue, but make it visible.
-            self.blocked.append((url, f"policy evaluation failed: {e!r}"))
+            self.note_block(url, f"policy evaluation failed: {e!r}")
             return None
         finally:
             self._in_policy_lookup = False
@@ -569,7 +580,7 @@ class Fetcher:
         seen: set[str] = set()
         for _ in range(max_hops):
             if url in seen:
-                self.blocked.append((url, "redirect loop"))
+                self.note_block(url, "redirect loop")
                 return None
             seen.add(url)
 
@@ -578,7 +589,7 @@ class Fetcher:
             # run past max_requests: with max_requests=1, a 302 -> 200 sequence
             # completed with count=2.
             if self.count >= self.max_requests:
-                self.blocked.append((url, "request budget exhausted mid-redirect"))
+                self.note_block(url, "request budget exhausted mid-redirect")
                 raise BudgetExceeded(
                     f"request budget of {self.max_requests} exhausted during "
                     "redirect following")
@@ -620,8 +631,7 @@ class Fetcher:
                 # from "checked and found nothing": two attempts on a 104 MB
                 # sellers.json failed here and left no trace at all, so the run
                 # reported no payee and no reason.
-                self.blocked.append(
-                    (url, f"transport error: {type(e).__name__}: {e}"))
+                self.note_block(url, f"transport error: {type(e).__name__}: {e}")
                 return None
 
             url = str(httpx.URL(url).join(location))
@@ -629,9 +639,9 @@ class Fetcher:
                 # A redirect is a new hostname and therefore a new resolution.
                 self.pins.approve(url)
             except UrlRejected as e:
-                self.blocked.append((url, f"redirect target rejected: {e.reason}"))
+                self.note_block(url, f"redirect target rejected: {e.reason}")
                 return None
-        self.blocked.append((url, "too many redirects"))
+        self.note_block(url, "too many redirects")
         return None
 
     async def get_json(self, url: str, headers: dict | None = None,

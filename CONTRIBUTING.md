@@ -38,6 +38,7 @@ undocumented and unversioned; treat it defensively).
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+python3 -m venv .venv && . .venv/bin/activate   # PEP 668: not optional on
+pip install -e ".[dev]"                        # Ubuntu, Debian, Fedora, Homebrew
 pytest -q && ruff check .
 ```

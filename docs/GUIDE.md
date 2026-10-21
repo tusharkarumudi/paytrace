@@ -562,7 +562,7 @@ model already refuses to attribute on a single self-published correlation group.
 Opt-in, three keys, off by default.
 
 ```bash
-pip install "paytrace[persona]"
+pip install "paytrace[persona]"    # inside a virtualenv (PEP 668)
 ```
 
 ```yaml

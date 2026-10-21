@@ -48,7 +48,7 @@ def _collector(routes):
 
 HTML = """<html><head>
 <meta name="author" content="Tran Thi Binh">
-<img src="//gravatar.com/avatar/205e460b479e2e5b48aec07710c08d50">
+<img src="//gravatar.com/avatar/6bfb104ce71ea623e4ac9a2927195445">
 <script>gtag('config','G-EXAMPLE001'); fbq('init','1234567890123456');</script>
 <script src="https://client-abc123.apps.googleusercontent.com/x"></script>
 <!-- site built by dev@agency.example, staging at staging.realsite.example -->
@@ -215,7 +215,7 @@ def test_collectors_agree_on_the_canonical_identifier():
     from paytrace.collectors.analytics import ID_PATTERNS
     from paytrace.collectors.artifacts import _SERVICE_IDS
 
-    digits = "5446113378742009"
+    digits = "0000000000005446"
     for text in (f'src="//x/adsbygoogle.js?client=ca-pub-{digits}"',
                  f"google.com, pub-{digits}, DIRECT"):
         a = ID_PATTERNS["adsense"][0].search(text)

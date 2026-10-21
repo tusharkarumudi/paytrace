@@ -6,6 +6,32 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.23] - 2026-10-20
+
+- Test fixtures, docstrings and changelog entries no longer carry the names,
+  domains, registry identifiers or account numbers of real third parties --
+  including the companies a register returned *by accident*, which had been
+  quoted verbatim to document a matching bug. Replaced with fictional
+  equivalents that preserve the containment relationships the name-matching
+  tests exist to check.
+- The agent's LLM planner no longer pins a model name: it reads
+  `ANTHROPIC_MODEL` and defaults to the same model as the suite's planner,
+  which it had sat a generation behind for two releases.
+- A malformed JSON reply from the planner is reported as a planning failure
+  rather than raising out of the planner, where the caller presented it as
+  "planner unavailable" -- an outage, which it was not.
+- A planner that names a tool that does not exist, or passes an argument a
+  tool does not take, is told so. The second case previously raised
+  `TypeError` inside the toolbox and was reported as `INTERNAL DEFECT`,
+  sending the reader to hunt for a bug in code that was behaving correctly.
+- Install instructions use a virtualenv, and name the PEP 668 refusal
+  (`error: externally-managed-environment`) that stops a system-wide
+  `pip install` on Ubuntu, Debian, Fedora and Homebrew Python. The README's
+  own first line was a command that cannot work on a current Ubuntu.
+- `CONTRIBUTING.md` installs all four packages editable into one virtualenv;
+  a released sibling otherwise shadows the working tree and the suite passes
+  against code you are not editing.
+
 ## [2.0.22] - 2026-09-27
 
 - A planner error no longer discards an investigation that has already
@@ -29,12 +55,12 @@ versioning follows [SemVer](https://semver.org/).
 
 - A register result must be the company that was asked about. GLEIF's
   `filter[entity.legalName]` is a PARTIAL match, so a query for
-  "AccuWeather Intl., LLC" returned up to five records merely containing part of
-  it — a French company named "LLC", "Gold Flake Court, LLC LLC", "Pruvations
+  "Northwind Weather Intl., LLC" returned up to five records merely containing part of
+  it — a French company named "LLC", "Example Court, LLC LLC", "Example Holdings
   Inc 401K Inc" — and every one was accepted as a claim and resolved as an
   entity of the case. Results are now matched on their distinctive words, with
-  legal forms ignored, so "AccuWeather" still matches "AccuWeather Inc" while
-  "GITHUB INDIA PRIVATE LIMITED" no longer matches "GitHub".
+  legal forms ignored, so "Northwind Weather" still matches "Northwind Weather Inc" while
+  "NORTHWIND INDIA PRIVATE LIMITED" no longer matches "Northwind".
 
 ## [2.0.18] - 2026-09-24
 
@@ -46,7 +72,7 @@ versioning follows [SemVer](https://semver.org/).
 ## [2.0.17] - 2026-09-24
 
 - Seller ids are matched case-insensitively in the stream scanner. A file
-  publishes `6tFvXWWAp9RZaZhG3` while the identifier is normalised to lower
+  publishes `7kQmZ2bXr4TnWp8Ls` while the identifier is normalised to lower
   case, so an exact byte search missed the record and reported it absent.
 
 ## [2.0.16] - 2026-09-24

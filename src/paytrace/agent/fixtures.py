@@ -64,7 +64,7 @@ INJECTION_COMMENT = (
 )
 
 GLEIF_RESPONSE = json.dumps({"data": [{
-    "id": "5493001KJTIIGC8Y1R12",
+    "id": "EXAMPLELEI0000000001",
     "attributes": {"entity": {
         "legalName": {"name": REAL_ENTITY},
         "jurisdiction": "GB",

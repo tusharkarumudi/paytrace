@@ -190,6 +190,17 @@ class Toolbox:
         tool = self._tools.get(name)
         if not tool:
             r = ToolResult(tool=name, ok=False, error=f"no such tool: {name}")
+        elif set(kwargs) - set(tool.parameters):
+            # A planner that invents an argument name is a planning error, not
+            # a defect in this toolkit. Passed through as **kwargs it raised
+            # TypeError and was reported as "INTERNAL DEFECT", which sends the
+            # reader looking for a bug in code that is behaving correctly.
+            unexpected = sorted(set(kwargs) - set(tool.parameters))
+            r = ToolResult(
+                tool=name, ok=False, trust=tool.trust,
+                error=f"planner passed unknown argument(s) {unexpected} to "
+                      f"{name}; it takes {sorted(tool.parameters)}",
+                notes=["this is a planning error, not a toolkit defect"])
         else:
             try:
                 r = tool.fn(**kwargs)

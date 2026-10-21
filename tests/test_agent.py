@@ -197,3 +197,106 @@ def test_report_surfaces_skipped_pivots():
 def test_report_labels_the_conclusion_source():
     assert "adopted from retrieved data" in report(run(True, False))
     assert "derived from the evidence graph" in report(run(True, True))
+
+
+# --------------------------------------------------------------------------- #
+# The planner is an untrusted component too
+# --------------------------------------------------------------------------- #
+
+def _brain():
+    from paytrace.agent.agent import LLMBrain
+    return LLMBrain()
+
+
+def test_the_model_name_is_not_hardcoded(monkeypatch):
+    """A pinned model means a new release needs a patch release of this package.
+
+    This brain sat a generation behind the suite's planner for two releases
+    because the name was a default argument nobody could override.
+    """
+    from paytrace.agent.agent import LLMBrain
+
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-opus-5")
+    import importlib
+
+    import paytrace.agent.agent as mod
+    importlib.reload(mod)
+    try:
+        assert mod.LLMBrain().model == "claude-opus-5"
+        assert mod.LLMBrain(model="explicit-wins").model == "explicit-wins"
+    finally:
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        importlib.reload(mod)
+    assert "4-5" not in LLMBrain().model, "the default is a generation behind"
+
+
+class _Reply:
+    """Stands in for an Anthropic message with one text block."""
+
+    def __init__(self, text):
+        self.content = [type("B", (), {"type": "text", "text": text})()]
+
+
+def _decide_with(monkeypatch, text, available=("ads_txt",)):
+    """Drive LLMBrain.decide against a canned model reply."""
+    import sys
+    import types
+
+    brain = _brain()
+    fake = types.ModuleType("anthropic")
+
+    class Client:
+        def __init__(self, *a, **k):
+            self.messages = types.SimpleNamespace(
+                create=lambda **kw: _Reply(text))
+
+    fake.Anthropic = Client
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "example-key")
+    return brain.decide("who operates it", ["(none)"], list(available))
+
+
+def test_malformed_json_is_a_planning_failure_not_an_outage(monkeypatch):
+    """`json.loads` on braces that are not JSON raised out of the planner, and
+    the caller reported "planner unavailable" -- which reads as an API outage
+    rather than one bad reply."""
+    d = _decide_with(monkeypatch, 'here you go: {"action": "call_tool",,,}')
+    assert d.action == "finish"
+    assert "malformed JSON" in d.rationale
+
+
+def test_a_non_object_reply_does_not_crash(monkeypatch):
+    d = _decide_with(monkeypatch, "{} [1, 2, 3]")
+    assert d.action == "finish"
+
+
+def test_an_invented_tool_name_is_caught_before_it_costs_a_step(monkeypatch):
+    """A hallucinated tool otherwise spends a step producing "no such tool",
+    with nothing in the record saying the planner invented it."""
+    d = _decide_with(monkeypatch,
+                     '{"action": "call_tool", "tool": "subpoena_the_registrar",'
+                     ' "args": {}}')
+    assert d.action == "finish"
+    assert "unavailable tool" in d.rationale
+    assert "subpoena_the_registrar" in d.rationale
+
+
+def test_a_valid_tool_choice_still_passes_through(monkeypatch):
+    d = _decide_with(monkeypatch,
+                     '{"action": "call_tool", "tool": "ads_txt",'
+                     ' "args": {"domain": "a.example"}}')
+    assert d.action == "call_tool"
+    assert d.tool == "ads_txt"
+    assert d.args == {"domain": "a.example"}
+
+
+def test_an_unknown_argument_is_reported_as_a_planning_error():
+    """Passed through as **kwargs it raised TypeError and was labelled
+    "INTERNAL DEFECT", sending the reader to hunt a bug in correct code."""
+    tb = Toolbox(FixtureFetcher(), FixtureIndex())
+    name = tb.names()[0]
+    r = tb.call(name, definitely_not_a_parameter="x")
+    assert not r.ok
+    assert "unknown argument" in r.error
+    assert "INTERNAL DEFECT" not in r.error
+    assert any("planning error" in n for n in r.notes)

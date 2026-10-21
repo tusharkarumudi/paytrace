@@ -8,7 +8,7 @@ transparency log.
 ## Verify a downloaded artifact
 
 ```bash
-pip install sigstore
+pipx install sigstore     # pip into a system Python is refused: PEP 668
 
 sigstore verify identity \
   --cert-identity "https://github.com/tusharkarumudi/REPO/.github/workflows/release.yml@refs/tags/vX.Y.Z" \

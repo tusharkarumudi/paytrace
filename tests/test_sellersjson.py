@@ -87,7 +87,7 @@ def test_empty_body_returns_none():
 # ---- natural persons ------------------------------------------------------- #
 
 @pytest.mark.parametrize("name", [
-    "TRẦN THỊ BÌNH", "Nguyen Van A", "Nguyen Van An", "Maria Garcia",
+    "TRẦN THỊ BÌNH", "Nguyen Van A", "Jane Ann Doe", "Maria Garcia",
     "Ravi Kumar Sharma",
 ])
 def test_individual_publishers_are_recognised_as_people(name):
@@ -210,7 +210,7 @@ def test_oversized_sellers_json_is_streamed_and_resolved(monkeypatch):
     import paytrace.net as net
     from paytrace.sellersjson import resolve_seller
 
-    target = _json.dumps({"seller_id": "pub-5446113378742009",
+    target = _json.dumps({"seller_id": "pub-0000000000005446",
                           "name": "Example Media Holdings Ltd",
                           "domain": "x.example", "seller_type": "PUBLISHER"})
     filler = ",".join(_json.dumps({"seller_id": str(i), "name": f"F{i}" * 40})
@@ -239,7 +239,7 @@ def test_oversized_sellers_json_is_streamed_and_resolved(monkeypatch):
 
     async def go():
         f = net.Fetcher(user_agent="t")
-        rec = await resolve_seller(f, "adnet.example", "pub-5446113378742009")
+        rec = await resolve_seller(f, "adnet.example", "pub-0000000000005446")
         scan = f.last_scan
         await f.aclose()
         return rec, scan
@@ -522,8 +522,8 @@ def test_a_pruned_seller_is_found_in_the_archive(monkeypatch):
     from paytrace.sellersjson import resolve_seller
 
     live = _json.dumps({"sellers": [{"seller_id": "other", "name": "Someone Else"}]})
-    archived = _json.dumps({"sellers": [{"seller_id": "6tfv", "name": "Relabe LLC",
-                                         "domain": "relabe.com",
+    archived = _json.dumps({"sellers": [{"seller_id": "6tfv", "name": "Example Adtech LLC",
+                                         "domain": "adrelay.example",
                                          "seller_type": "PUBLISHER"}]})
 
     def handler(req):
@@ -562,7 +562,7 @@ def test_a_pruned_seller_is_found_in_the_archive(monkeypatch):
         return rec, absent
 
     rec, absent = asyncio.run(go())
-    assert rec and rec.name == "Relabe LLC"
+    assert rec and rec.name == "Example Adtech LLC"
     assert "web.archive.org" in rec.source_url, "provenance must show the snapshot"
     assert "20250601" in rec.source_url, "newest snapshot first"
     assert absent, "the live document being checked and lacking it must be recorded"
@@ -629,14 +629,14 @@ def test_a_publisher_id_matches_whatever_spelling_the_file_uses():
 
     from paytrace.sellersjson import _RecordScanner, find_seller_in_text
 
-    for stored in ("pub-8130782205865473", "8130782205865473",
-                   "ca-pub-8130782205865473"):
+    for stored in ("pub-0000000000008130", "0000000000008130",
+                   "ca-pub-0000000000008130"):
         doc = _json.dumps({"sellers": [{"seller_id": stored, "name": "Tabi Cam Ltd",
                                         "domain": "tabi.cam",
                                         "seller_type": "PUBLISHER"}]})
-        rec = find_seller_in_text(doc, "google.com", "pub-8130782205865473")
+        rec = find_seller_in_text(doc, "google.com", "pub-0000000000008130")
         assert rec and rec.name == "Tabi Cam Ltd", stored
-        scanner = _RecordScanner("pub-8130782205865473")
+        scanner = _RecordScanner("pub-0000000000008130")
         scanner.feed(doc.encode())
         assert scanner.record, f"stream missed {stored}"
 
@@ -656,7 +656,7 @@ def test_a_large_sellers_json_is_downloaded_once_and_reused(monkeypatch, tmp_pat
     import paytrace.sellersjson as sj
     importlib.reload(sj)
 
-    target = _json.dumps({"seller_id": "pub-8130782205865473",
+    target = _json.dumps({"seller_id": "pub-0000000000008130",
                           "name": "Tabi Cam Ltd", "domain": "tabi.cam",
                           "seller_type": "PUBLISHER"})
     doc = ('{"sellers":['
@@ -685,7 +685,7 @@ def test_a_large_sellers_json_is_downloaded_once_and_reused(monkeypatch, tmp_pat
 
     async def go():
         f = net.Fetcher(user_agent="t")
-        found = [await sj.resolve_seller(f, "google.com", "pub-8130782205865473")
+        found = [await sj.resolve_seller(f, "google.com", "pub-0000000000008130")
                  for _ in range(3)]
         await f.aclose()
         return found
@@ -697,19 +697,19 @@ def test_a_large_sellers_json_is_downloaded_once_and_reused(monkeypatch, tmp_pat
 
 
 def test_a_mixed_case_seller_id_is_still_found():
-    """Seller ids are opaque strings: a file publishes `6tFvXWWAp9RZaZhG3`
+    """Seller ids are opaque strings: a file publishes `7kQmZ2bXr4TnWp8Ls`
     while the identifier has been normalised to lower case. The byte scanner
     searched case-sensitively, missed the record, and reported it absent."""
     import json as _json
 
     from paytrace.sellersjson import _RecordScanner, find_seller_in_text
 
-    doc = _json.dumps({"sellers": [{"seller_id": "6tFvXWWAp9RZaZhG3",
-                                    "name": "Kredi Uzman",
-                                    "domain": "krediuzman.com",
+    doc = _json.dumps({"sellers": [{"seller_id": "7kQmZ2bXr4TnWp8Ls",
+                                    "name": "Example Medya Ltd.",
+                                    "domain": "other-site.example",
                                     "seller_type": "PUBLISHER"}]})
-    for probe in ("6tFvXWWAp9RZaZhG3", "6tfvxwwap9rzazhg3", "6TFVXWWAP9RZAZHG3"):
-        assert find_seller_in_text(doc, "relabe.com", probe).name == "Kredi Uzman"
+    for probe in ("7kQmZ2bXr4TnWp8Ls", "7kqmz2bxr4tnwp8ls", "7KQMZ2BXR4TNWP8LS"):
+        assert find_seller_in_text(doc, "adrelay.example", probe).name == "Example Medya Ltd."
         scanner = _RecordScanner(probe)
         scanner.feed(doc.encode())
         assert scanner.record, f"stream missed {probe}"

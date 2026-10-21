@@ -80,8 +80,8 @@ SOURCES: dict[str, str] = {
         '<script async src="https://www.googletagmanager.com/gtag/js?id=G-EXAMPLE001">'
         '</script></head><body>content</body></html>'
     ),
-    "https://api.gleif.example/lei/5493001KJTIIGC8Y1R12": json.dumps({
-        "data": {"id": "5493001KJTIIGC8Y1R12", "attributes": {"entity": {
+    "https://api.gleif.example/lei/EXAMPLELEI0000000001": json.dumps({
+        "data": {"id": "EXAMPLELEI0000000001", "attributes": {"entity": {
             "legalName": {"name": "Example Media Holdings Ltd"},
             "jurisdiction": "GB",
             "registeredAs": "09876543",
@@ -215,11 +215,11 @@ async def main() -> None:
               Reliability.AUTHORITATIVE, "portfolio|adsense:1234567890123456")
 
     # -- 5. GLEIF ------------------------------------------------------------- #
-    url = "https://api.gleif.example/lei/5493001KJTIIGC8Y1R12"
+    url = "https://api.gleif.example/lei/EXAMPLELEI0000000001"
     _, c4 = await grab(url, "gleif", "GLEIF LEI record")
-    lei = Identifier(IdKind.LEI, "5493001KJTIIGC8Y1R12")
+    lei = Identifier(IdKind.LEI, "EXAMPLELEI0000000001")
     cn = Identifier(IdKind.COMPANY_NUMBER, "gb/09876543")
-    trail.extract("LEI", "5493001KJTIIGC8Y1R12", c4)
+    trail.extract("LEI", "EXAMPLELEI0000000001", c4)
     claim(org, Predicate.SAME_AS, lei, url, Reliability.AUTHORITATIVE, "gleif|lei")
     claim(lei, Predicate.SAME_AS, cn, url, Reliability.AUTHORITATIVE, "gleif|lei")
     claim(lei, Predicate.INCORPORATED_IN, "GB", url, Reliability.AUTHORITATIVE, "gleif|lei")
@@ -271,7 +271,7 @@ async def main() -> None:
     result = resolve(graph, scope.entity_types_allowed)
     trail.infer(
         "scraper-site.example is operated by Example Media Holdings Ltd "
-        "(LEI 5493001KJTIIGC8Y1R12, UK 09876543)",
+        "(LEI EXAMPLELEI0000000001, UK 09876543)",
         basis="Reciprocated ads.txt/sellers.json declaration plus a load-bearing "
               "AdSense account, corroborated by the GLEIF registry chain.",
         citations=[c1, c2, c3, c4])

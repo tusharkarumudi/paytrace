@@ -31,6 +31,7 @@ makes the comparison mean anything.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -183,15 +184,22 @@ class LLMBrain:
         '\"args\": {}, \"rationale\": str, \"conclusion\": str}'
     )
 
-    def __init__(self, model: str = "claude-sonnet-4-5") -> None:
-        self.model = model
+    #: Overridable, and shared with the suite's planner. A hardcoded model
+    #: name means a new model release needs a patch release of this package,
+    #: and this one was a generation behind the suite's for two releases.
+    DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+    def __init__(self, model: str = "") -> None:
+        self.model = model or self.DEFAULT_MODEL
 
     def decide(self, goal: str, context: list[str], available: list[str]) -> Decision:
-        import os
         try:
             import anthropic
         except ImportError:
-            raise RuntimeError("pip install anthropic, or use --brain scripted") from None
+            raise RuntimeError(
+                'the anthropic SDK is not installed: install the extra '
+                '(paytrace[agent], or `pipx inject paytrace anthropic`), '
+                "or use --brain scripted") from None
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise RuntimeError("ANTHROPIC_API_KEY unset; use --brain scripted")
 
@@ -206,8 +214,26 @@ class LLMBrain:
         m = re.search(r"\{.*\}", text, re.S)
         if not m:
             return Decision("finish", rationale="unparseable model response")
-        d = json.loads(m.group(0))
-        return Decision(action=d.get("action", "finish"), tool=d.get("tool", ""),
+        try:
+            d = json.loads(m.group(0))
+        except json.JSONDecodeError as e:
+            # Braces are not JSON. Unguarded, this raised inside the planner
+            # and the caller reported "planner unavailable", which reads as an
+            # outage rather than one malformed reply.
+            return Decision("finish",
+                            rationale=f"malformed JSON from the model: {e}")
+        if not isinstance(d, dict):
+            return Decision("finish", rationale="model returned a non-object")
+
+        action = d.get("action", "finish")
+        tool = d.get("tool", "") or ""
+        if action == "call_tool" and tool not in available:
+            # A hallucinated tool name otherwise spends a step producing
+            # "no such tool", with nothing saying the planner invented it.
+            return Decision("finish",
+                            rationale=f"model chose an unavailable tool: "
+                                      f"{tool!r} is not in {available}")
+        return Decision(action=action, tool=tool,
                         args=d.get("args", {}) or {},
                         rationale=d.get("rationale", ""),
                         conclusion=d.get("conclusion", ""))

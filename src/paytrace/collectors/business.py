@@ -129,16 +129,16 @@ def gleif_record_matches(queried: str, returned: str) -> bool:
     """Did the register return the company we asked about?
 
     `filter[entity.legalName]` is a PARTIAL match: asking for
-    "AccuWeather Intl., LLC" returns records merely containing part of it — a
-    French company named "LLC", "Gold Flake Court, LLC LLC" — and every one was
+    "Northwind Weather Intl., LLC" returns records merely containing part of it — a
+    French company named "LLC", "Example Court, LLC LLC" — and every one was
     accepted as a claim and resolved as an entity of the case.
     """
     want, got = _name_key(queried), _name_key(returned)
     if not want or not got:
         return False
     # Exact, on the distinctive words. Legal forms are already stripped, so
-    # "AccuWeather" and "AccuWeather Inc" agree; a prefix rule would also admit
-    # "GITHUB INDIA PRIVATE LIMITED" for "GitHub", which is a different company.
+    # "Northwind Weather" and "Northwind Weather Inc" agree; a prefix rule would also admit
+    # "NORTHWIND INDIA PRIVATE LIMITED" for "Northwind", which is a different company.
     return want == got
 
 

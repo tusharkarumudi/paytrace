@@ -413,7 +413,7 @@ class _RecordScanner:
 
     def __init__(self, seller_id: str) -> None:
         # Case-insensitive: seller ids are opaque strings and a file may publish
-        # `6tFvXWWAp9RZaZhG3` while the identifier has been normalised to lower
+        # `7kQmZ2bXr4TnWp8Ls` while the identifier has been normalised to lower
         # case. An exact byte search missed the record and reported it absent.
         self._needles = [f'"{f}"'.lower().encode()
                          for f in seller_id_forms(seller_id)]

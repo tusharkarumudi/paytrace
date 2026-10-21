@@ -20,19 +20,19 @@ from paytrace import (
 # ---- extraction: quoted and unquoted HTML ---------------------------------- #
 
 @pytest.mark.parametrize("body,kind,value", [
-    ('<a href="/author/nguyen-van-an/">x</a>', "wordpress_author", "nguyen-van-an"),
-    ("<a href=/author/nguyen-van-an/>x</a>", "wordpress_author", "nguyen-van-an"),
+    ('<a href="/author/jane-ann-doe/">x</a>', "wordpress_author", "jane-ann-doe"),
+    ("<a href=/author/jane-ann-doe/>x</a>", "wordpress_author", "jane-ann-doe"),
     ('<a rel="me" href="https://mastodon.social/@op">x</a>', "webfinger",
      "https://mastodon.social/@op"),
     ("<a rel=me href=https://mas.to/@op>x</a>", "webfinger", "https://mas.to/@op"),
-    ("user.email = an@operator-site.example", "git_email", "an@operator-site.example"),
-    ('<img src="https://gravatar.com/avatar/205e460b479e2e5b48aec07710c08d50">',
-     "gravatar", "205e460b479e2e5b48aec07710c08d50"),
-    ("login_hint=an@operator-site.example", "oauth_login_hint", "an@operator-site.example"),
+    ("user.email = jane@operator-site.example", "git_email", "jane@operator-site.example"),
+    ('<img src="https://gravatar.com/avatar/6bfb104ce71ea623e4ac9a2927195445">',
+     "gravatar", "6bfb104ce71ea623e4ac9a2927195445"),
+    ("login_hint=jane@operator-site.example", "oauth_login_hint", "jane@operator-site.example"),
     ('<a href="https://docs.google.com/document/d/'
      '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit">d</a>', "google_doc",
      "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"),
-    ("<p>Operated by Nguyen Van An</p>", "body_name", "Nguyen Van An"),
+    ("<p>Operated by Jane Ann Doe</p>", "body_name", "Jane Ann Doe"),
 ])
 def test_artifacts_are_extracted_from_both_html_styles(body, kind, value):
     ex = extract_artifacts(body, "x.example")
@@ -85,12 +85,12 @@ def test_generic_wordpress_authors_are_skipped():
 CLEAN_SEED = ('<script src="https://www.googletagmanager.com/gtag/js?id='
               'G-SHARED123"></script><h1>Welcome</h1>')
 SIBLING_A = ('<script src="https://www.googletagmanager.com/gtag/js?id='
-             'G-SHARED123"></script><a href=/author/nguyen-van-an/>x</a>'
-             '<p>Operated by Nguyen Van An</p>')
+             'G-SHARED123"></script><a href=/author/jane-ann-doe/>x</a>'
+             '<p>Operated by Jane Ann Doe</p>')
 SIBLING_B = ('<script src="https://www.googletagmanager.com/gtag/js?id='
              'G-SHARED123"></script>'
              '<img src="https://gravatar.com/avatar/'
-             '205e460b479e2e5b48aec07710c08d50">')
+             '6bfb104ce71ea623e4ac9a2927195445">')
 
 
 class _Fetcher:
@@ -138,7 +138,7 @@ def test_clean_seed_recovers_identity_from_siblings():
         index=_Index(["sibling-a.example", "sibling-b.example"])))
     assert len(r.siblings) == 2
     assert "sibling-a.example" in r.identity_found_on
-    assert any(c.object.value == "Nguyen Van An" for c in r.claims)
+    assert any(c.object.value == "Jane Ann Doe" for c in r.claims)
 
 
 def test_pivot_claims_decay_with_distance():
@@ -213,10 +213,10 @@ def test_probing_is_off_by_default():
 
 
 def test_git_config_probe_yields_committer_identity():
-    body = "[user]\n  name = Nguyen Van An\n  email = an@operator-site.example\n"
+    body = "[user]\n  name = Jane Ann Doe\n  email = jane@operator-site.example\n"
     f = _Fetcher({"https://x.example/.git/config": body})
     r = asyncio.run(probe_sensitive_paths(f, "x.example", enabled=True))
-    assert any(c.object.value == "an@operator-site.example"
+    assert any(c.object.value == "jane@operator-site.example"
                and c.reliability is Reliability.AUTHORITATIVE for c in r.claims)
     assert any(c.object.kind is IdKind.PERSON_NAME for c in r.claims)
 
@@ -239,7 +239,7 @@ def test_probe_is_audit_logged():
 
 def test_wp_users_api_probe_parses_json():
     import json
-    body = json.dumps([{"name": "Nguyen Van An", "slug": "nguyen-van-an"}])
+    body = json.dumps([{"name": "Jane Ann Doe", "slug": "jane-ann-doe"}])
     f = _Fetcher({"https://x.example/wp-json/wp/v2/users": body})
     r = asyncio.run(probe_sensitive_paths(f, "x.example", enabled=True))
-    assert any(c.object.value == "Nguyen Van An" for c in r.claims)
+    assert any(c.object.value == "Jane Ann Doe" for c in r.claims)

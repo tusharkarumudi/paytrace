@@ -122,11 +122,11 @@ async def test_firefox_amo_json_is_parsed_properly():
 
     url = "https://addons.mozilla.org/api/v5/addons/addon/example-downloader/"
     body = json.dumps({"authors": [
-        {"id": 1, "name": "Nguyen Van An", "homepage": "https://operator-site.example/"}]})
+        {"id": 1, "name": "Jane Ann Doe", "homepage": "https://operator-site.example/"}]})
     c = ExtensionStoreDeveloper(_Fetcher({url: body}), _Scope())
     claims = list(await c.collect(
         Identifier(IdKind.URL, "ext:firefox/example-downloader")))
-    assert any(x.object.kind is IdKind.PERSON_NAME and x.object.value == "Nguyen Van An"
+    assert any(x.object.kind is IdKind.PERSON_NAME and x.object.value == "Jane Ann Doe"
                for x in claims)
     assert any(x.object.kind is IdKind.DOMAIN for x in claims)
 
@@ -317,36 +317,36 @@ def test_a_legal_suffix_is_not_searched_in_a_register():
 def test_real_company_names_are_still_searched():
     from paytrace.collectors.business import searchable_org_name
 
-    for real in ("AccuWeather, Inc.", "Relabe LLC", "Kredi Uzman",
-                 "Intercept Interactive Inc.", "Cyber Media (India) Ltd."):
+    for real in ("Northwind Weather, Inc.", "Example Adtech LLC", "Example Medya Ltd.",
+                 "Example Interactive Inc.", "Example Media (India) Ltd."):
         assert searchable_org_name(real), real
 
 
 def test_a_register_result_must_be_the_company_asked_about():
     """GLEIF's `filter[entity.legalName]` is a PARTIAL match. Asking for
-    "AccuWeather Intl., LLC" returned records merely containing part of it — a
-    French company named "LLC", "Gold Flake Court, LLC LLC", "Pruvations Inc
+    "Northwind Weather Intl., LLC" returned records merely containing part of it — a
+    French company named "LLC", "Example Court, LLC LLC", "Example Holdings Inc
     401K Inc" — and every one was accepted as a claim and resolved as an entity
     of the case beside the real subject."""
     from paytrace.collectors.business import gleif_record_matches
 
-    for junk in ("LLC", "INC", "Gold Flake Court, LLC LLC", "INC Group Inc.",
-                 "Pruvations Inc 401K Inc", "Gazelle.ia Inc. / Gazelle.ai Inc."):
-        assert not gleif_record_matches("AccuWeather Intl., LLC", junk), junk
+    for junk in ("LLC", "INC", "Example Court, LLC LLC", "INC Group Inc.",
+                 "Example Inc 401K Inc", "Example.ia Inc. / Example.ai Inc."):
+        assert not gleif_record_matches("Northwind Weather Intl., LLC", junk), junk
 
 
 def test_the_right_company_still_matches_across_legal_forms():
     from paytrace.collectors.business import gleif_record_matches
 
-    assert gleif_record_matches("AccuWeather, Inc.", "AccuWeather, Inc.")
-    assert gleif_record_matches("AccuWeather", "AccuWeather Inc")
-    assert gleif_record_matches("Intercept Interactive Inc.",
-                                "Intercept Interactive Inc.")
+    assert gleif_record_matches("Northwind Weather, Inc.", "Northwind Weather, Inc.")
+    assert gleif_record_matches("Northwind Weather", "Northwind Weather Inc")
+    assert gleif_record_matches("Example Interactive Inc.",
+                                "Example Interactive Inc.")
 
 
 def test_a_subsidiary_is_not_the_parent():
-    """A prefix rule would admit "GITHUB INDIA PRIVATE LIMITED" for "GitHub"."""
+    """A prefix rule would admit "NORTHWIND INDIA PRIVATE LIMITED" for "Northwind"."""
     from paytrace.collectors.business import gleif_record_matches
 
-    assert gleif_record_matches("GitHub", "GITHUB INC")
-    assert not gleif_record_matches("GitHub", "GITHUB INDIA PRIVATE LIMITED")
+    assert gleif_record_matches("Northwind", "NORTHWIND INC")
+    assert not gleif_record_matches("Northwind", "NORTHWIND INDIA PRIVATE LIMITED")

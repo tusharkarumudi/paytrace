@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.24] - 2026-10-21
+
+- **Demotion inspects both sides of a claim.** A claim states something about
+  two identifiers and the planted one can be either; only the object side was
+  checked. The artifacts and analytics collectors emit `analytics_id -> domain`,
+  so the class of identifier most often planted was never demoted in a real
+  run. The demo missed it by building claims the other way round.
+- **The asymmetry check is reached by the orchestrator.** It was defined,
+  unit-tested in isolation and called by nothing, so three of the four
+  planted-identifier checks ran. `assess_identifier` now takes the sharing
+  domains and their corpus depth, and says plainly when it has no corpus and
+  therefore cannot run the check.
+- A later check no longer downgrades `INERT` to `SUSPECT`. Both demote, so
+  overwriting changed no outcome and lost the only concrete reason in the
+  assessment -- that the page does not use the identifier at all.
+
 ## [2.0.23] - 2026-10-20
 
 - Test fixtures, docstrings and changelog entries no longer carry the names,

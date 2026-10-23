@@ -143,3 +143,68 @@ def test_mixed_case_identifiers_are_demoted():
                                                       checks={"load_bearing": "comment"})})
         assert out[0].weight == 0.0, key
         assert "planted-identifier check" in out[0].raw["demoted"]
+
+
+def test_a_later_check_does_not_downgrade_inert_to_suspect():
+    """INERT says the page does not use the identifier. SUSPECT says something
+    looks off. Both demote, so overwriting the first with the second changes no
+    outcome and loses the only concrete reason in the assessment.
+    """
+    from paytrace.adversarial import Assessment, Verdict
+
+    a = Assessment("ga4:G-PLANTED1", Verdict.INERT)
+    # what the asymmetry and temporal-depth branches now do
+    if a.verdict not in (Verdict.INERT, Verdict.CORROBORATED):
+        a.verdict = Verdict.SUSPECT
+    assert a.verdict is Verdict.INERT
+    assert a.should_demote
+
+
+def test_asymmetry_is_reached_by_the_orchestrator(monkeypatch):
+    """It was defined, tested in isolation, and called by nothing -- which made
+    it documentation rather than a check. Three of the four planted-identifier
+    checks ran; this one never did."""
+    import asyncio
+
+    from paytrace import adversarial as adv
+
+    called = {}
+
+    def spy(subject, owners, counts):
+        called["args"] = (subject, list(owners), dict(counts))
+        return False, "spied: more established property"
+
+    monkeypatch.setattr(adv, "check_asymmetry", spy)
+
+    async def never(*a, **k):
+        return None, "skipped for this test"
+
+    monkeypatch.setattr(adv, "check_load_bearing", never)
+    monkeypatch.setattr(adv, "check_temporal_depth", never)
+
+    out = asyncio.run(adv.assess_identifier(
+        None, "small.example", "ga4", "G-SOMEONE1",
+        sharing_domains=["small.example", "big.example"],
+        holder_counts={"small.example": 2, "big.example": 900}))
+
+    assert called, "check_asymmetry was never called"
+    assert out.checks["asymmetry"].startswith("spied:")
+    assert out.verdict is adv.Verdict.SUSPECT
+
+
+def test_asymmetry_says_so_when_it_cannot_run():
+    """Without a corpus the check cannot mean anything, and silence would read
+    as a pass."""
+    import asyncio
+
+    from paytrace import adversarial as adv
+
+    async def never(*a, **k):
+        return None, "skipped"
+
+    import unittest.mock as m
+    with m.patch.object(adv, "check_load_bearing", never), \
+         m.patch.object(adv, "check_temporal_depth", never):
+        out = asyncio.run(adv.assess_identifier(
+            None, "a.example", "ga4", "G-SOMEONE1"))
+    assert "needs a corpus index" in out.checks["asymmetry"]

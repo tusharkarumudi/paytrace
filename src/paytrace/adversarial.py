@@ -281,8 +281,17 @@ async def assess_identifier(
     html: str | None = None,
     adsystem: str | None = None,
     seller_id: str | None = None,
+    sharing_domains: Sequence[str] = (),
+    holder_counts: dict[str, int] | None = None,
 ) -> Assessment:
-    """Run every applicable check and reach a verdict."""
+    """Run every applicable check and reach a verdict.
+
+    ``sharing_domains`` and ``holder_counts`` enable the asymmetry check, which
+    needs to know who else carries this identifier and how established they
+    are. Both come from a corpus index, so the check is skipped -- and said to
+    be skipped -- when no index was supplied. It was previously defined and
+    never called by anything, which made it documentation rather than a check.
+    """
     a = Assessment(identifier=f"{scheme}:{value}", verdict=Verdict.UNVERIFIED)
 
     if adsystem and seller_id:
@@ -315,11 +324,30 @@ async def assess_identifier(
     ok, why = await check_temporal_depth(fetcher, domain, value)
     a.checks["temporal_depth"] = why
     if ok is False and a.verdict is not Verdict.CORROBORATED:
-        a.verdict = Verdict.SUSPECT
+        # Never downgrade INERT. "The page does not use this identifier" is a
+        # more specific statement than "something looks off", and both demote,
+        # so overwriting it only loses the reason an analyst would want.
+        if a.verdict is not Verdict.INERT:
+            a.verdict = Verdict.SUSPECT
         a.reasons.append(why)
     elif ok is True and a.verdict is Verdict.UNVERIFIED:
         a.verdict = Verdict.CORROBORATED
         a.reasons.append(why)
+
+    # Directional: this subject carrying a much more established property's
+    # identifier is template reuse or planting before it is common control.
+    # Needs a corpus to know what "more established" means.
+    if holder_counts and len(sharing_domains) > 1:
+        ok, why = check_asymmetry(domain, list(sharing_domains), holder_counts)
+        a.checks["asymmetry"] = why
+        if ok is False:
+            if a.verdict not in (Verdict.INERT, Verdict.CORROBORATED):
+                a.verdict = Verdict.SUSPECT
+            a.reasons.append(why)
+    else:
+        a.checks["asymmetry"] = (
+            "not checked: needs a corpus index to compare how established the "
+            "other holders of this identifier are")
 
     return a
 
@@ -340,8 +368,18 @@ def apply_assessments(
     by_key = {k.lower(): a for k, a in assessments.items()}
     out: list[Claim] = []
     for c in claims:
-        key = c.object.value if isinstance(c.object, Identifier) else None
-        a = by_key.get((key or "").lower())
+        # BOTH sides. A claim is a statement about two identifiers and the
+        # planted one can be either: the artifacts and analytics collectors
+        # emit `analytics_id -> domain`, so checking only the object side left
+        # the class of identifier most often planted -- an analytics ID -- at
+        # full weight in every real run. The demo demoted correctly because
+        # its fixture happened to put the identifier on the object side.
+        a = None
+        for side in (c.object, c.subject):
+            if isinstance(side, Identifier):
+                a = by_key.get(side.value.lower())
+                if a:
+                    break
         if a and a.should_demote:
             c.weight = 0.0
             c.raw["demoted"] = f"planted-identifier check: {a.verdict.value}"

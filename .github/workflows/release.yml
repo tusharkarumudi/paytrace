@@ -361,7 +361,7 @@ jobs:
         # Metadata-Version <= 2.3 and rejected our hatchling-built 2.5 wheel as
         # "Metadata is missing required fields: Name, Version" -- a parse
         # failure reported as missing data. Do not pin this backwards.
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
         with:
           # NOT skip-existing. On production PyPI a filename collision means the
           # version was already published -- silently tolerating that lets a tag

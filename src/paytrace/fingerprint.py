@@ -89,10 +89,6 @@ class Resolution:
     error: str = ""
 
     @property
-    def behind_cdn(self) -> bool:
-        return self.cdn is not None
-
-    @property
     def origin_concealed(self) -> bool:
         """Every address is CDN edge, so the origin is not observable here."""
         return bool(self.addresses) and all(cdn_for(a) for a in self.addresses)

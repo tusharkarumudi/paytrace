@@ -99,10 +99,6 @@ class GuardReport:
     fields_withheld: list[str] = field(default_factory=list)
     claims_demoted: int = 0
 
-    @property
-    def triggered(self) -> bool:
-        return any(f.severity is Severity.LIKELY_INJECTION for f in self.findings)
-
     def render(self) -> str:
         if not self.findings and not self.fields_withheld:
             return "no findings"

@@ -168,10 +168,6 @@ class AdsTxt:
         return len(self.accounts)
 
     @property
-    def account_count(self) -> int:
-        return len({a.key for a in self.accounts})
-
-    @property
     def direct_count(self) -> int:
         return len({a.key for a in self.accounts if a.is_direct})
 
@@ -187,10 +183,6 @@ class AdsTxt:
     def owner_domain(self) -> str:
         v = self.variables.get("OWNERDOMAIN", [])
         return v[0] if v else ""
-
-    @property
-    def manager_domains(self) -> list[str]:
-        return self.variables.get("MANAGERDOMAIN", [])
 
     @property
     def looks_aggregated(self) -> bool:

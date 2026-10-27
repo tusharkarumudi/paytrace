@@ -6,6 +6,129 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.25] - 2026-10-27
+
+### A sandbox now works without a flag
+
+The most common failure anyone hit: inside a sandbox -- an assistant running
+the skill, a hosted notebook, a CI container -- every retrieval was blocked and
+the report read as though the sites had refused. Three separate causes, all
+fixed.
+
+- **An ambient proxy is adopted instead of refused.** `trust_env=False` stays:
+  a silently-adopted proxy would make the manifest record `direct` while
+  traffic left through someone else's exit. But the invariant that protects is
+  *the manifest must not claim a vantage point the traffic did not use*, and
+  recording the proxy as the `environment` provider satisfies it exactly.
+  Refusing outright was stricter than the invariant needed, and the remedy was
+  a flag nobody knew to pass. `--direct` keeps the old behaviour for the one
+  case that wants it: asking what is reachable from this machine.
+- **An intercepting proxy's CA bundle is trusted, for that egress only.** Those
+  proxies terminate TLS and re-sign, and `trust_env=False` also meant the
+  bundle such environments publish was never read -- so every HTTPS retrieval
+  failed `CERTIFICATE_VERIFY_FAILED` while the proxy itself worked. Narrow on
+  purpose: a declared commercial egress and a direct connection never take
+  trust from an environment variable, which would let whoever set it choose who
+  we believe. Recorded as the evidential downgrade it is, in `tls_intercepted`.
+- **SSRF checks are no longer skipped wholesale on a proxied run.** They were,
+  on the grounds that the proxy resolves -- true, but it discarded a check that
+  costs nothing whenever an answer is available. Most sandboxes resolve DNS
+  normally and only egress through the proxy, and the proxy an agent sandbox
+  provides is usually on *localhost*, where loopback and metadata addresses are
+  very much reachable. Resolution is now attempted either way and enforced
+  whenever it returns an answer; only an unresolvable host skips the check, and
+  the policy records that it was not performed. A hostname resolving to
+  169.254.169.254 is refused whether or not a proxy would have carried it.
+
+### A byte cap is not a block
+
+`Fetcher.get` filed a truncated body under `blocked`, claiming the retrieval
+"produced no evidence" while writing an evidence record for it with
+`outcome="truncated"` and returning usable content. It forced the result
+INCOMPLETE, and an ordinary large file triggers it. Truncation now goes to
+`truncated_reads` -- a partial retrieval, not a lost one -- and the
+compensating surgery in `sellersjson.py`, which stripped recovered truncations
+back out of `blocked`, went with it.
+
+Caught by the existing test: the streaming fallback's trigger read truncation
+*out of* `blocked`, so correcting the mis-filing silently disabled the 104 MB
+sellers.json fallback and the payee stopped resolving. The trigger now watches
+`truncated_reads`.
+
+### Removed and wired
+
+- `probe_url` and `verify_egress_country` were a fail-open proxy check with no
+  caller: the only way to learn a proxy had failed open was to read the
+  manifest afterwards, by which time the retrievals had already happened from
+  somewhere the case may have been written to avoid. New `preflight()` detects
+  it by comparison -- probe through the egress, probe through a direct one, and
+  the same address from both means the proxy is not carrying the traffic.
+  Needs no geo service and gives a definite answer; a declared country is
+  reported as UNVERIFIED rather than implied to have been checked.
+- Removed, as unreachable: `stream_find_seller` (a wrapper over `_stream_at`,
+  which is what the real path calls), `AdsTxt.account_count`,
+  `AdsTxt.manager_domains` (the collector reads `variables` directly),
+  `Resolution.behind_cdn`, `PivotResult.domains_examined`,
+  `GuardReport.triggered`.
+
+- **New `gravatar_link` module: emails bound to avatar hashes by arithmetic,
+  with no requests at all.** A WordPress page publishes an author's avatar as
+  `gravatar.com/avatar/<32 hex>`, and that hash is `md5(lowercase(trim(
+  email)))`. So an address found anywhere in a case can be tested against
+  every hash found anywhere else by computing one digest. This replaces two
+  things: probing gravatar.com once per discovered address to answer a
+  question arithmetic answers for free, and generating candidate addresses
+  from a name and a domain to hash and test -- which manufactures a binding
+  out of a guess and presents it with the certainty of a computation. Both
+  sides must have been **observed**.
+- **The link was impossible before this.** The Gravatar collector hashed
+  emails with SHA-256 while every hash published in page markup is MD5, so an
+  address and a page's hash for the same person could never match. The
+  canonical `fingerprint.gravatar_hash` was written for exactly this
+  comparison and was not being called.
+- A match means the page **displays that address's avatar**. It does not mean
+  the page's operator controls the address -- anyone can embed anyone's hash,
+  and an operator wanting to implicate someone needs only their email to do
+  it. So the claim takes the **correlation group of the page the hash came
+  from**, which stops it corroborating itself, and `gravatar_link` is
+  deliberately absent from the engine's definitional collectors, so a planted
+  hash cannot bind a bystander. `AUTHORITATIVE` here describes the
+  computation, which is exact, and grants nothing beyond it.
+
+
+
+- **New `cloaking` module: differential retrieval of ads.txt.** The whole
+  method rests on that file being a public declaration, and nothing compared
+  our copy against anyone else's -- so a site serving one file to this tool
+  and another to a browser defeated every check downstream of the retrieval,
+  and the report read as though the declaration were the site's rather than
+  ours. The check retrieves the file more than once, varying one thing at a
+  time, and compares the SET of `(ad system, seller ID, relationship)` plus
+  `OWNERDOMAIN`. Never bytes: two honest copies differ constantly in comments,
+  ordering and line endings, and a byte comparison would report cloaking on
+  every site in the world. Verdicts are `consistent`, `cosmetic_differences`,
+  `DIFFERENT_ACCOUNTS` and `unverified` -- the last being the honest answer
+  when only one copy could be retrieved, because a single copy cannot show
+  whether it is the copy everyone gets.
+- Every retrieval the check makes goes through the ordinary fetcher, so each
+  is subject to the same policy and SSRF guards and each lands in the evidence
+  package. A check whose own requests were exempt would not be evidence.
+- **A run can declare the environment's own proxy as its egress**
+  (`provider: environment`, or `--egress-env` from the suite). The HTTP client
+  is built with `trust_env=False` on purpose -- a proxy picked up silently
+  would make the evidence manifest record `direct` while the traffic left
+  through someone else's exit -- but inside a sandbox the only route out IS
+  that proxy, so a direct run could not resolve a single host and reported
+  every retrieval blocked. Declared, never ambient; the egress is recorded
+  with its exit point explicitly undeclared, because it belongs to whoever
+  runs the sandbox.
+- URL validation no longer rejects a host on local DNS when the run goes
+  through a proxy. The proxy resolves and connects, so the local answer
+  describes nothing about the socket that opens -- and in a sandbox there is
+  no local answer at all. `UrlPolicy.proxied` records that the address checks
+  were not performed here, rather than implying they passed.
+- "host does not resolve" now names the likely cause and the remedy.
+
 ## [2.0.24] - 2026-10-21
 
 - **Demotion inspects both sides of a claim.** A claim states something about

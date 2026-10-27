@@ -83,6 +83,15 @@ class UrlPolicy:
     #: Hosts explicitly permitted despite resolving privately. For a self-hosted
     #: yente or a local corpus service.
     allowlist: frozenset[str] = frozenset()
+    #: True when this run leaves through a declared proxy. The proxy resolves,
+    #: so a name this machine cannot resolve says nothing about where the
+    #: request would land -- and rejecting on it made the tool unusable in any
+    #: sandbox whose only route out is a proxy: every retrieval was refused
+    #: with "host does not resolve" before a request was ever attempted.
+    #: Address checks are then not performed HERE, and that is recorded rather
+    #: than assumed; the network layer has to deny RFC1918 and 169.254.169.254
+    #: instead. See the posture note in DEPLOYMENT.md.
+    proxied: bool = False
     rejections: list[tuple[str, str]] = field(default_factory=list)
 
     def record(self, url: str, reason: str) -> None:
@@ -191,8 +200,31 @@ def check_url(url: str, policy: UrlPolicy | None = None,
         return url
 
     addresses = resolver(host)
+
     if not addresses:
-        raise UrlRejected(url, "host does not resolve")
+        if policy.proxied:
+            # The reason this branch exists: in a sandbox the proxy resolves
+            # and this process cannot, so an unresolvable host says nothing
+            # about where the socket will go. Allowed, and recorded as
+            # unchecked rather than treated as verified.
+            policy.record(url, "address checks not performed: the host does "
+                               "not resolve from this machine and the proxy "
+                               "resolves on our behalf")
+            return url
+        raise UrlRejected(
+            url,
+            "host does not resolve from this machine (if your only route out "
+            "is a proxy, declare it: the proxy resolves, this process cannot)")
+
+    # Proxied runs used to skip these checks outright, on the grounds that the
+    # proxy does the resolving. True, but it threw away a check that costs
+    # nothing when it can be made: most sandboxes resolve DNS perfectly well
+    # and only egress through the proxy, and a proxy on localhost -- which is
+    # what an agent sandbox usually provides -- can reach loopback and
+    # metadata addresses. So resolution is attempted either way now, and the
+    # answer is enforced whenever there is one. A host that does resolve, to
+    # 169.254.169.254, is refused whether or not a proxy would have carried
+    # the request.
 
     for addr in addresses:
         try:

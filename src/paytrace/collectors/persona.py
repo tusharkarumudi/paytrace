@@ -59,7 +59,15 @@ class Gravatar(Collector):
 
     async def collect(self, ident: Identifier) -> Iterable[Claim]:
         if ident.kind is IdKind.EMAIL:
-            h = hashlib.sha256(ident.value.strip().lower().encode()).hexdigest()
+            # MD5, from the canonical implementation. This computed SHA-256,
+            # while every hash published in page markup is MD5 -- so the
+            # identifier this collector asserted for an email could never
+            # match the hash found on a page, and the one link the hash exists
+            # to make was impossible. `fingerprint.gravatar_hash` was written
+            # for this comparison and was not being called.
+            from ..fingerprint import gravatar_hash
+
+            h = gravatar_hash(ident.value)
             subject = ident
         else:
             h = ident.value

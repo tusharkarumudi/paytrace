@@ -13,6 +13,7 @@ import base64
 import contextvars
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -183,6 +184,11 @@ class Fetcher:
         #: count, forced the result INCOMPLETE, and blurred the one distinction
         #: this toolkit exists to make.
         self.checked_absent: list[tuple[str, str]] = []
+        #: Retrievals that completed but hit the byte cap. Usable content was
+        #: returned and an evidence record written, so these are partial
+        #: retrievals rather than blocked ones -- but a caller reasoning about
+        #: completeness needs to know the body was cut.
+        self.truncated_reads: list[tuple[str, str]] = []
         #: byte count and digest of the last scan-mode retrieval
         self.last_scan: dict | None = None
         # Content varies by the requester's apparent location, so the exit used
@@ -190,6 +196,17 @@ class Fetcher:
         # that does not record its egress is not reproducible even in
         # principle.
         self.egress = egress or EgressPool([Egress(label="direct")], "direct")
+        # A declared proxy resolves and connects on our behalf, so the local
+        # address checks describe nothing about the socket that opens. Marked
+        # here, once, from the egress the operator declared -- not sniffed from
+        # the environment.
+        # `is_direct`, not `proxy_url()`: building the URL reads a credential
+        # and raises for a misconfigured egress, which would move that error
+        # from the moment the egress is USED to the moment a Fetcher is
+        # constructed -- turning a precise failure into one at an unrelated
+        # call site.
+        if any(not e.is_direct for e in self.egress.egresses):
+            self.url_policy.proxied = True
         # Capture recording is a transport invariant, not a caller
         # responsibility. The runner used to build an EvidenceLog, never pass
         # it anywhere, then write and self-verify it -- so a run that made real
@@ -229,6 +246,10 @@ class Fetcher:
         # metadata, which meant the manifest recorded a vantage point the
         # transport never used. Recording provenance that did not happen is
         # worse than recording none: it is a fabricated chain of custody.
+        #: Set to the variable naming the CA bundle when an environment
+        #: proxy's trust store was adopted. Non-empty means TLS was terminated
+        #: by that proxy, so a capture proves what the proxy served.
+        self.tls_intercepted: str = ""
         self._clients: dict[str, httpx.AsyncClient] = {}
         self._buckets: dict[str, _Bucket] = {}
 
@@ -237,6 +258,7 @@ class Fetcher:
         egress = self.egress.get(label)
         if egress.label not in self._clients:
             proxy = egress.proxy_url()          # raises if misconfigured
+            verify = self._trust_store(egress)
             if proxy:
                 # The proxy resolves, so no address we validate is the address
                 # the socket reaches. Recorded rather than assumed: a control
@@ -259,10 +281,42 @@ class Fetcher:
                 # Pinning is only possible when we resolve. Through a proxy the
                 # proxy resolves, so it is disabled and recorded rather than
                 # silently assumed -- see PinnedResolver.pins_enforced.
+                **({"verify": verify} if verify else {}),
                 **({"proxy": proxy} if proxy
                    else {"transport": PinnedTransport(self.pins)}),
             )
         return self._clients[egress.label]
+
+    #: Where a sandbox publishes the CA it signs intercepted traffic with.
+    _CA_VARS = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+
+    def _trust_store(self, egress) -> str:
+        """A CA bundle to trust, for an environment-provided proxy only.
+
+        A sandbox proxy -- the kind an assistant running this as a skill, a
+        hosted notebook or a CI container sits behind -- usually terminates TLS
+        and re-signs with its own CA. `trust_env=False` is deliberate and also
+        means the bundle those environments publish is never read, so every
+        HTTPS retrieval failed with CERTIFICATE_VERIFY_FAILED while the proxy
+        itself worked. Hosts appeared to refuse us; they had not been asked.
+
+        Narrow on purpose. Only the `environment` provider gets this, because
+        an environment variable must not be able to add trust to a declared
+        commercial egress or to a direct connection -- that would let whatever
+        set the variable choose who we believe.
+
+        It is an evidential downgrade and is recorded as one: through an
+        intercepting proxy, a capture proves the proxy served those bytes, not
+        that the origin did. `tls_intercepted` carries that into the manifest.
+        """
+        if egress.provider != "environment":
+            return ""
+        for var in self._CA_VARS:
+            path = os.environ.get(var, "").strip()
+            if path and Path(path).is_file():
+                self.tls_intercepted = var
+                return path
+        return ""
 
     @property
     def _client(self) -> httpx.AsyncClient:
@@ -438,7 +492,17 @@ class Fetcher:
             return Response(final_url, status, "")
 
         if truncated:
-            self.note_block(url, f"body truncated at {self.max_bytes} bytes")
+            # Not a block, for the same reason a negative result is not one:
+            # this retrieval COMPLETED and is returning usable content a few
+            # lines below. Filing it under `blocked` claimed the fetch
+            # "produced no evidence" while an evidence record with
+            # outcome="truncated" was being written for it, forced the result
+            # INCOMPLETE, and inflated the blocked count -- a 10 MB cap is hit
+            # by ordinary large files, so every run touching one reported a
+            # block that never happened. The cap still matters and still gets
+            # recorded; it is a partial retrieval, not a lost one.
+            self.truncated_reads.append(
+                (url, f"body truncated at {self.max_bytes} bytes"))
         text = raw.decode(encoding or "utf-8", errors="replace")
 
         # A TRUNCATED body is never cached. Caching it poisoned every later

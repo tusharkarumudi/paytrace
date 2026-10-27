@@ -290,13 +290,18 @@ def test_a_recovered_truncation_is_not_reported_as_blocked(monkeypatch):
     async def go():
         f = net.Fetcher(user_agent="t")
         rec = await resolve_seller(f, "adnet.example", "pub-1")
-        blocked = list(f.blocked)
+        blocked, partial = list(f.blocked), list(f.truncated_reads)
         await f.aclose()
-        return rec, blocked
+        return rec, blocked, partial
 
-    rec, blocked = asyncio.run(go())
+    rec, blocked, partial = asyncio.run(go())
     assert rec and rec.name == "Example Ltd"
     assert not [b for b in blocked if "truncated" in b[1]], blocked
+    # Stronger than before. This used to pass because the recovered entry was
+    # stripped back out of `blocked` afterwards, so the test could not tell a
+    # truncation that was never mis-filed from one that was mis-filed and then
+    # cleaned up. The cap is still recorded -- as a partial read.
+    assert [p for p in partial if "truncated" in p[1]], partial
 
 
 def test_a_failed_read_falls_back_to_streaming(monkeypatch):

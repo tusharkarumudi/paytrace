@@ -49,7 +49,12 @@ def test_body_is_capped_without_materialising_the_whole_response(tmp_path):
                           headers=None))
     assert r is not None
     assert len(r.text) <= cap
-    assert any("truncated" in reason for _, reason in f.blocked)
+    # Truncation is a PARTIAL retrieval, not a blocked one: usable content
+    # came back and an evidence record was written for it. Filing it under
+    # `blocked` claimed the fetch produced no evidence and forced the run
+    # INCOMPLETE, which every ordinary large file triggered.
+    assert any("truncated" in reason for _, reason in f.truncated_reads)
+    assert not [b for b in f.blocked if "truncated" in b[1]]
     asyncio.run(f.aclose())
 
 
@@ -577,3 +582,78 @@ def test_scan_mode_gets_a_timeout_suited_to_a_huge_body():
     source = (pathlib.Path(__file__).resolve().parents[1]
               / "src" / "paytrace" / "net.py").read_text()
     assert 'max(self._timeout, 300.0)' in source
+
+
+# --------------------------------------------------------------------------- #
+# Running where the only way out is a proxy
+# --------------------------------------------------------------------------- #
+
+def test_an_environment_egress_reads_the_ambient_proxy(monkeypatch):
+    """Declared, never ambient. `trust_env=False` is deliberate -- a proxy
+    picked up silently would make the manifest record `direct` while the
+    traffic left through someone else's exit -- but inside a sandbox the only
+    route out IS that proxy, and a direct run cannot resolve anything."""
+    from paytrace.egress import Egress
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8899")
+    e = Egress(label="env", provider="environment")
+    assert e.proxy_url() == "http://127.0.0.1:8899"
+    assert not e.is_direct
+    assert "ambient proxy" in e.note
+
+
+def test_an_environment_egress_without_a_proxy_says_so(monkeypatch):
+    from paytrace.egress import Egress, ProxyError
+
+    for var in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy",
+                "HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(ProxyError, match="no HTTPS_PROXY"):
+        Egress(label="env", provider="environment").proxy_url()
+
+
+def test_a_proxied_run_does_not_reject_on_local_dns(monkeypatch):
+    """The whole failure, in one assertion.
+
+    Every URL was refused with "host does not resolve" before a request was
+    attempted, because validation resolved locally. Through a proxy the proxy
+    resolves, so the local answer describes nothing about the socket that
+    opens -- and in a sandbox there is no local answer at all.
+    """
+    from paytrace.netsec import UrlPolicy, UrlRejected, check_url
+
+    def no_dns(host):
+        return []
+
+    direct = UrlPolicy()
+    with pytest.raises(UrlRejected):
+        check_url("https://unresolvable.example/ads.txt", direct,
+                     resolver=no_dns)
+
+    proxied = UrlPolicy(proxied=True)
+    assert check_url("https://unresolvable.example/ads.txt", proxied,
+                        resolver=no_dns)
+
+
+def test_the_rejection_names_the_remedy(monkeypatch):
+    """"host does not resolve" sent people looking at the site. The cause is
+    usually this machine."""
+    from paytrace.netsec import UrlPolicy, UrlRejected, check_url
+
+    with pytest.raises(UrlRejected) as got:
+        check_url("https://unresolvable.example/", UrlPolicy(),
+                     resolver=lambda h: [])
+    assert "proxy" in str(got.value).lower()
+
+
+def test_a_proxied_fetcher_marks_its_url_policy(monkeypatch):
+    from paytrace import Fetcher
+    from paytrace.egress import Egress, EgressPool
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8899")
+    pool = EgressPool([Egress(label="env", provider="environment")], "env")
+    f = Fetcher(user_agent="t", egress=pool)
+    assert f.url_policy.proxied is True
+
+    plain = Fetcher(user_agent="t")
+    assert plain.url_policy.proxied is False

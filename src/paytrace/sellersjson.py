@@ -329,6 +329,12 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str,
 
     for url in candidate_urls(adsystem):
         seen = len(getattr(fetcher, "blocked", ()))
+        # Truncation is recorded separately from blocks now, so the streaming
+        # trigger below watches that list. Reading it out of `blocked` meant
+        # the trigger depended on truncation being mis-filed as a block: the
+        # moment that was corrected, the 104 MB fallback stopped firing and
+        # the payee silently stopped resolving.
+        seen_partial = len(getattr(fetcher, "truncated_reads", ()))
         r = await fetcher.get(url)
         # A response that ARRIVES and is useless -- 403, 429, an error page --
         # was skipped in silence, so a refused candidate looked exactly like one
@@ -339,8 +345,9 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str,
             size = 0 if r is None else len(r.text or "")
             fetcher.blocked.append(
                 (url, f"no usable sellers.json: {status}, {size} byte body"))
-        truncated = any("truncated" in why
-                        for _u, why in list(getattr(fetcher, "blocked", ()))[seen:])
+        truncated = any(
+            "truncated" in why for _u, why in
+            list(getattr(fetcher, "truncated_reads", ()))[seen_partial:])
         usable = bool(r and r.status == 200 and r.text)
         if usable:
             rec = find_seller_in_text(r.text, adsystem, seller_id, url)
@@ -370,13 +377,13 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str,
                               f"this document ({scanned} bytes read)"))
                 absent_at.append(url)
             if rec:
-                # The truncation was recovered: this retrieval DID produce
-                # evidence. Leaving it in `blocked` counted a successful
-                # fallback as a failed fetch, inflating collection_blocked and
-                # reporting the run INCOMPLETE for a gap that was filled.
-                fetcher.blocked[:] = [
-                    entry for entry in fetcher.blocked
-                    if not (entry[0] == url and "truncated" in entry[1])]
+                # No `blocked` surgery here any more. This used to strip the
+                # truncated first attempt back out of `fetcher.blocked`,
+                # because a recovered truncation was being counted as a failed
+                # fetch. `Fetcher.get` now files truncation under
+                # `truncated_reads` instead, where it belongs whether or not
+                # the fallback recovers anything -- so there is nothing left to
+                # remove, and the compensating code went with it.
                 return rec
     # Read successfully and the seller is not there. Often the account was
     # pruned -- ad systems prune, publishers rarely do. But operators also copy
@@ -473,15 +480,6 @@ async def _stream_at(fetcher, url: str, adsystem: str, seller_id: str):
     return find_seller_in_text('{"sellers":[' + scanner.record + "]}",
                                adsystem, seller_id, url)
 
-
-async def stream_find_seller(fetcher, adsystem: str, seller_id: str):
-    """Look up one seller in a sellers.json of any size.
-
-    Streams the document, matches the record as it passes, and keeps only that
-    record. The retrieval stays evidenced: the fetcher records the byte count
-    and a SHA-256 taken over the stream.
-    """
-    return await _stream_at(fetcher, sellers_json_url(adsystem), adsystem, seller_id)
 
 #: Snapshots of a sellers.json to try when the current one lacks the seller.
 #: Newest first: the closest copy to the ads.txt line is the most relevant.

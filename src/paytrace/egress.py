@@ -179,7 +179,14 @@ class Egress:
         if self.provider != "direct" and self.network is NetworkType.DIRECT:
             self.network = NetworkType.UNKNOWN
 
-        if self.provider not in PROVIDERS and self.provider != "direct":
+        if self.provider == self.ENVIRONMENT:
+            # Its endpoint is whatever the environment says, so there is no
+            # profile to validate against and no country claim to check.
+            self.network = NetworkType.UNKNOWN
+            if not self.note:
+                self.note = ("ambient proxy, declared explicitly by the "
+                             "operator; its exit point is not ours to assert")
+        elif self.provider not in PROVIDERS and self.provider != "direct":
             raise ProxyError(
                 f"unknown provider {self.provider!r}; known: "
                 f"{', '.join(sorted(PROVIDERS))}, or 'direct'")
@@ -188,7 +195,7 @@ class Egress:
         # A free caller label meant `oxylabs` + `datacenter` routed to the
         # residential endpoint while recording consent_sensitive=false, so the
         # provenance and the safeguard were both wrong.
-        if self.provider != "direct":
+        if self.provider not in ("direct", self.ENVIRONMENT):
             profile = PROVIDERS[self.provider]
             if (profile.networks and self.network is not NetworkType.UNKNOWN
                     and self.network not in profile.networks):
@@ -213,7 +220,10 @@ class Egress:
         `oxylabs` + `datacenter` recorded a non-sensitive datacenter exit while
         routing to the residential endpoint.
         """
-        if self.is_direct:
+        if self.is_direct or self.provider == self.ENVIRONMENT:
+            # The environment's proxy has no profile to validate against: its
+            # exit point belongs to whoever runs the sandbox, and claiming to
+            # know it would be the fabrication this check exists to prevent.
             return
         profile = PROVIDERS[self.provider]
         if not profile.networks or self.network is NetworkType.UNKNOWN:
@@ -236,8 +246,32 @@ class Egress:
     def consent_sensitive(self) -> bool:
         return self.network in CONSENT_SENSITIVE
 
+    #: An egress whose proxy URL comes from this machine's own environment.
+    #: Declared, never ambient: `trust_env=False` on the client is deliberate,
+    #: because a proxy picked up silently would make the evidence manifest
+    #: record `direct` while the traffic left through someone else's exit.
+    #: Naming it in the case file keeps the provenance true AND makes the tool
+    #: usable inside a sandbox whose only route out is an HTTP proxy -- which
+    #: is every agent sandbox, where a direct connection cannot resolve
+    #: anything and the whole run reports itself blocked.
+    ENVIRONMENT = "environment"
+
+    def environment_proxy(self) -> str:
+        """The ambient proxy, read at use time and never stored."""
+        for var in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy",
+                    "HTTP_PROXY", "http_proxy"):
+            value = os.environ.get(var, "").strip()
+            if value:
+                return value
+        raise ProxyError(
+            f"egress {self.label!r} is declared as provider 'environment', but "
+            "no HTTPS_PROXY, ALL_PROXY or HTTP_PROXY is set in this "
+            "environment. Unset it in the case file, or set the variable.")
+
     def proxy_url(self) -> str | None:
         """The URL to hand an HTTP client. Never logged, never serialised."""
+        if self.provider == self.ENVIRONMENT:
+            return self.environment_proxy()
         if self.is_direct:
             return None
 
@@ -489,3 +523,111 @@ def verify_egress_country(reported_country: str, expected: str) -> tuple[bool, s
         f"exit is in {got.upper() or 'an unknown country'} but "
         f"{expected.upper()} was requested — the proxy may have failed open, "
         "which would attribute captures to a vantage point they did not use")
+
+
+@dataclass
+class PreflightResult:
+    """What one egress actually turned out to be, before the run uses it."""
+    label: str
+    reached: bool = False
+    apparent_address: str = ""
+    apparent_country: str = ""
+    failed_open: bool = False
+    note: str = ""
+
+    def render(self) -> str:
+        if not self.reached:
+            return f"egress `{self.label}`: could not be checked — {self.note}"
+        where = self.apparent_address or "an address it did not report"
+        tail = f", {self.apparent_country.upper()}" if self.apparent_country else ""
+        if self.failed_open:
+            return (f"egress `{self.label}`: FAILED OPEN — traffic is leaving "
+                    f"from {where}{tail}. {self.note}")
+        return f"egress `{self.label}`: exits from {where}{tail}"
+
+
+async def preflight(fetcher, pool, *, label: str = "") -> PreflightResult:
+    """Check what an egress really is, once, before the run depends on it.
+
+    A proxy that fails open sends traffic from the analyst's own address while
+    every capture in the manifest claims the configured vantage point. Until
+    now `probe_url` and `verify_egress_country` both existed for this and
+    neither had a caller, so the only way to find out was to read the manifest
+    afterwards -- by which time the captures carry a vantage point they never
+    had, and a run performed from a jurisdiction the case was written to avoid
+    cannot be undone.
+
+    Fail-open is detected by comparison, not by geolocation: probe through the
+    configured egress, probe again directly, and if both report the SAME
+    apparent address then the proxy is not carrying the traffic. That needs no
+    geo service and gives a definite answer. A declared country cannot be
+    confirmed from an address alone, so when one is declared this says the
+    claim is unverified rather than implying it was checked -- an unverified
+    claim stated as verified is worse than no check at all.
+
+    Deliberately cheap and deliberately non-fatal: at most two requests, and a
+    failure to reach the probe is reported as "could not be checked", never as
+    a verdict about the egress. A sandbox that blocks the probe host but allows
+    the targets is a working run.
+    """
+    egress = pool.get(label)
+    result = PreflightResult(label=egress.label)
+
+    seen = await _apparent_address(fetcher, egress.label)
+    if seen is None:
+        result.note = "the probe request was blocked or returned nothing"
+        return result
+    result.reached = True
+    result.apparent_address = seen
+
+    if not egress.is_direct:
+        # The baseline has to come from an egress that is actually direct.
+        # Omitting the label would fall through to the pool default, which is
+        # the proxy being tested -- a comparison of the proxy against itself,
+        # which always agrees and would have reported every proxy healthy.
+        plain = next((e for e in pool.egresses if e.is_direct), None)
+        baseline = (await _apparent_address(fetcher, plain.label)
+                    if plain is not None else None)
+        if baseline is None:
+            result.note = ("no direct egress is configured to compare against, "
+                           "so whether the proxy is carrying the traffic is "
+                           "unverified here")
+        elif baseline == seen:
+            result.failed_open = True
+            result.note = ("a direct request reports the same address, so the "
+                           "proxy is not carrying this traffic and every "
+                           "capture would record a vantage point it did not "
+                           "use")
+        else:
+            result.note = "a direct request reports a different address"
+
+    if egress.country:
+        # Wired, but only where it can mean something. The probe reports an
+        # address; the country behind it is not observable without a geo
+        # source this toolkit does not ship.
+        ok, why = verify_egress_country(result.apparent_country, egress.country)
+        claim = (why if result.apparent_country else
+                 f"the declared exit country {egress.country.upper()} is "
+                 "UNVERIFIED: an address does not establish a country")
+        result.note = f"{result.note}; {claim}" if result.note else claim
+        if not ok and result.apparent_country:
+            result.failed_open = True
+
+    return result
+
+
+async def _apparent_address(fetcher, label: str):
+    """The source address this environment appears to have through `label`."""
+    import json as _json
+
+    try:
+        r = await fetcher.get(probe_url(), egress=label)
+    except Exception:                       # noqa: BLE001 - absence is the signal
+        return None
+    if r is None:
+        return None
+    try:
+        return str(_json.loads(r.text).get("ip", "") or "") or None
+    except (ValueError, AttributeError, TypeError):
+        text = (getattr(r, "text", "") or "").strip()
+        return text[:64] or None

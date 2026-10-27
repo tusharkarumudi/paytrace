@@ -83,10 +83,6 @@ class PivotResult:
     refused: list[tuple[str, str]] = field(default_factory=list)
     identity_found_on: list[str] = field(default_factory=list)
 
-    @property
-    def domains_examined(self) -> list[str]:
-        return [self.seed] + [s.domain for s in self.siblings]
-
     def render(self) -> str:
         L = [f"Pivot expansion from {self.seed}",
              f"  {len(self.siblings)} sibling(s) across "

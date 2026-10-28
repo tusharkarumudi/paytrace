@@ -11,6 +11,18 @@ versioning follows [SemVer](https://semver.org/).
 Everything else in this release was published as 2.0.25. These changes landed
 after that tag and need a number of their own.
 
+- **`MANAGERDOMAIN=bcn.group, DE` was silently dropped.** The ads.txt variable
+  pattern captured its value with `[^\s#]+`, which stops at the first space --
+  so a spec-legal `<domain>, <countrycode>` matched neither a variable nor a
+  record and the line vanished without a trace. weather.com declares exactly
+  that form, and `MANAGERDOMAIN` is not decoration: it names the entity that
+  manages the inventory, which is the attribution question. `CONTACT`, which
+  the spec defines as free text, was broken the same way. Found by trying the
+  toolkit on a real major publisher instead of fixtures.
+- `AdsTxt.owner_domain` strips a trailing country code. Callers compare it
+  against a seller's domain with `endswith`, so a value carrying ", de" would
+  never have matched anything.
+
 - **A sellers.json lookup with no local mirror no longer records a block.**
   "No local copy; falling back to a direct fetch" is a note about trying the
   next candidate, and the loop below it records what actually happens --
@@ -112,8 +124,6 @@ sellers.json fallback and the payee stopped resolving. The trigger now watches
   deliberately absent from the engine's definitional collectors, so a planted
   hash cannot bind a bystander. `AUTHORITATIVE` here describes the
   computation, which is exact, and grants nothing beyond it.
-
-
 
 - **New `cloaking` module: differential retrieval of ads.txt.** The whole
   method rests on that file being a public declaration, and nothing compared

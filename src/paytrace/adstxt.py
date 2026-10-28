@@ -141,9 +141,22 @@ class AccountAssessment:
 # Parsing
 # --------------------------------------------------------------------------- #
 
+#: An ads.txt variable line.
+#:
+#: The value runs to a comment or the end of the line, NOT to the first space.
+#: `[^\s#]+` broke on every spec-legal value containing one:
+#:
+#:   MANAGERDOMAIN=bcn.group, DE      <- domain plus ISO 3166-1 country code
+#:   CONTACT=Ads Team <ads@x.example> <- free text, per the spec
+#:
+#: Neither matched, and neither then matched a record line either, so the line
+#: vanished without a trace. weather.com declares exactly the first form, and
+#: MANAGERDOMAIN is not decoration: it names the entity that manages the
+#: inventory, which is the attribution question. Consumers already split the
+#: value at the first comma, so capturing it whole is what they expect.
 _VARIABLE = re.compile(
     r"^\s*(OWNERDOMAIN|MANAGERDOMAIN|CONTACT|SUBDOMAIN|INVENTORYPARTNERDOMAIN)"
-    r"\s*=\s*([^\s#]+)\s*(?:#(.*))?$", re.I)
+    r"\s*=\s*([^#]+?)\s*(?:#(.*))?$", re.I)
 
 #: Placeholder records signal an unmaintained or templated file.
 _PLACEHOLDER = re.compile(r"placeholder|example\.com|yourdomain|REPLACE", re.I)
@@ -181,8 +194,14 @@ class AdsTxt:
 
     @property
     def owner_domain(self) -> str:
+        """The declared owner domain, without any trailing country code.
+
+        The spec allows `<domain>[, <cc>]` on these lines, and callers compare
+        this against a seller's domain with `endswith` -- a value carrying
+        ", de" would never match anything.
+        """
         v = self.variables.get("OWNERDOMAIN", [])
-        return v[0] if v else ""
+        return v[0].split(",")[0].strip() if v else ""
 
     @property
     def looks_aggregated(self) -> bool:

@@ -198,3 +198,49 @@ def test_boilerplate_threshold_boundary(count, expected):
         assert a.klass is expected
     else:
         assert a.klass in (AccountClass.LIKELY_OWNED, AccountClass.RESELLER_CHAIN)
+
+
+# ---- spec-legal variable values -------------------------------------------- #
+
+@pytest.mark.parametrize("line,name,value", [
+    # The form weather.com actually declares. `MANAGERDOMAIN` takes an
+    # optional ISO 3166-1 alpha-2 country code after a comma, and the value
+    # group used to stop at the first space -- so this matched neither a
+    # variable nor a record and the line vanished without a trace.
+    ("MANAGERDOMAIN=bcn.group, DE", "MANAGERDOMAIN", "bcn.group, de"),
+    ("MANAGERDOMAIN=bcn.group", "MANAGERDOMAIN", "bcn.group"),
+    ("managerdomain=bcn.group, DE", "MANAGERDOMAIN", "bcn.group, de"),
+    ("MANAGERDOMAIN =bcn.group, DE", "MANAGERDOMAIN", "bcn.group, de"),
+    ("OWNERDOMAIN=weather.com", "OWNERDOMAIN", "weather.com"),
+    # CONTACT is free text per the spec, so spaces are ordinary there.
+    ("CONTACT=Ads Team <ads@x.example>", "CONTACT", "ads team <ads@x.example>"),
+    ("SUBDOMAIN=sub.x.example", "SUBDOMAIN", "sub.x.example"),
+    ("INVENTORYPARTNERDOMAIN=p.example", "INVENTORYPARTNERDOMAIN", "p.example"),
+])
+def test_a_variable_value_may_contain_spaces(line, name, value):
+    ads = parse(line, "x.example")
+    assert ads.variables.get(name) == [value], (
+        f"{line!r} was dropped: MANAGERDOMAIN names the entity managing the "
+        "inventory, which is the attribution question")
+
+
+def test_a_variable_keeps_its_trailing_comment_out_of_the_value():
+    ads = parse("OWNERDOMAIN=weather.com  # the publisher", "x.example")
+    assert ads.variables["OWNERDOMAIN"] == ["weather.com"]
+    assert ads.variable_comments["OWNERDOMAIN"] == "the publisher"
+
+
+def test_owner_domain_drops_a_country_code():
+    """Callers compare this with `endswith` against a seller's domain, so a
+    value carrying ", de" would never match anything."""
+    ads = parse("OWNERDOMAIN=weather.com, US", "x.example")
+    assert ads.owner_domain == "weather.com"
+
+
+def test_a_variable_line_is_never_mistaken_for_a_record():
+    ads = parse(
+        "MANAGERDOMAIN=bcn.group, DE\nadrelay.example, 123, DIRECT\n",
+        "x.example")
+    assert len(ads.accounts) == 1
+    assert ads.accounts[0].adsystem == "adrelay.example"
+    assert ads.variables["MANAGERDOMAIN"] == ["bcn.group, de"]

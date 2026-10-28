@@ -20,8 +20,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 CATALOG_PATH = Path(__file__).parent / "data" / "registries.yaml"
 
 
@@ -75,6 +73,13 @@ class Registry:
 
 @lru_cache(maxsize=1)
 def load_catalog(path: str | Path = CATALOG_PATH) -> tuple[Registry, ...]:
+    # Imported here, not at module scope. This module is reachable from
+    # `import paytrace`, and PyYAML is needed by exactly one function -- so a
+    # module-scope import made the whole package unimportable wherever PyYAML
+    # is absent, including the offline bundle that runs in a chat sandbox
+    # where nothing can be installed.
+    import yaml
+
     raw: dict[str, Any] = yaml.safe_load(Path(path).read_text())
     out: list[Registry] = []
     for category, entries in raw.items():

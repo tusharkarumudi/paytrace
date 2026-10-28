@@ -320,12 +320,16 @@ async def resolve_seller(fetcher, adsystem: str, seller_id: str,
             absent_at.append(url)
             if not archive:
                 return None
-        elif hasattr(fetcher, "blocked"):
-            # No local copy AND the download did not complete: fall through to
-            # the ordinary candidate loop rather than giving up. Returning here
-            # skipped the live attempt entirely.
-            fetcher.blocked.append(
-                (url, "no local copy; falling back to a direct fetch"))
+        # No local copy, so fall through to the ordinary candidate loop rather
+        # than giving up -- returning here skipped the live attempt entirely.
+        #
+        # Deliberately NOT recorded as a block. "Falling back to a direct
+        # fetch" is a note about trying the next candidate, and the loop below
+        # records whatever actually happens to that candidate. Filing it under
+        # `blocked` counted a lost retrieval for every sellers.json lookup
+        # without a local mirror -- which is all of them, for most users --
+        # inflating collection_blocked and pushing runs to INCOMPLETE for a
+        # fetch that then succeeded one line later.
 
     for url in candidate_urls(adsystem):
         seen = len(getattr(fetcher, "blocked", ()))

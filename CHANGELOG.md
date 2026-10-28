@@ -6,6 +6,24 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.26] - 2026-10-27
+
+Everything else in this release was published as 2.0.25. These changes landed
+after that tag and need a number of their own.
+
+- **A sellers.json lookup with no local mirror no longer records a block.**
+  "No local copy; falling back to a direct fetch" is a note about trying the
+  next candidate, and the loop below it records what actually happens --
+  filing it under `blocked` counted a lost retrieval for every lookup without
+  a mirror, which is all of them for most users, and pushed runs to INCOMPLETE
+  for a fetch that succeeded one line later. Same mis-filing as the byte-cap
+  defect fixed in 2.0.25.
+- `paytrace.catalog` imports PyYAML lazily and `collectors.base` imports
+  `Fetcher` only for type checking. Both were module-scope imports pulling a
+  third-party package in for something that does not need it at import time,
+  which made the package unimportable where those packages are absent -- the
+  condition the offline bundle exists for.
+
 ## [2.0.25] - 2026-10-27
 
 ### A sandbox now works without a flag

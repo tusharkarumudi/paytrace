@@ -8,10 +8,12 @@ constructed -- a collector declaring a denied class raises at load, not at call.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 from attribution_graph import CaseScope, Claim, Identifier, IdKind, SourceClass
 
-from ..net import Fetcher
+if TYPE_CHECKING:          # annotation-only: `..net` imports httpx, and a
+    from ..net import Fetcher  # collector never touches it at import time
 
 
 class Collector:

@@ -34,12 +34,44 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def live_fetcher(**kw) -> Fetcher:
+    """A Fetcher configured the way a real run configures one.
+
+    A bare `Fetcher` has only a `direct` egress, and a direct egress
+    deliberately refuses to trust a CA named by the environment -- so behind an
+    intercepting proxy these tests failed TLS verification. They used to pass
+    there only because the pinned transport was silently reading
+    SSL_CERT_FILE, which is the hole that change set closed; the tests were
+    green because of the defect.
+
+    A run adopts an ambient proxy and records the vantage point as
+    `environment`, which is what makes the proxy's CA usable and what puts
+    `tls_intercepted` in the manifest. These do the same, so they exercise the
+    path a run takes. With no proxy set -- CI, a developer's machine -- this is
+    an ordinary direct egress and nothing changes.
+    """
+    import os
+
+    from paytrace.egress import Egress, EgressPool, NetworkType
+
+    var = next((v for v in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY",
+                            "all_proxy", "HTTP_PROXY", "http_proxy")
+                if os.environ.get(v, "").strip()), "")
+    if not var:
+        return Fetcher(**kw)
+    pool = EgressPool(
+        [Egress(label="environment", provider="environment",
+                network=NetworkType.DATACENTER)],
+        default_label="environment")
+    return Fetcher(egress=pool, **kw)
+
+
 def test_a_real_fetch_succeeds_and_is_captured():
     """The whole guarded path against a real server: DNS, pinning, robots,
     TLS, streaming read, evidence capture."""
 
     async def go():
-        f = Fetcher(user_agent="paytrace-live-test (+https://pypi.org/)")
+        f = live_fetcher(user_agent="paytrace-live-test (+https://pypi.org/)")
         try:
             r = await f.get(LIVE_URL)
             return r, list(f.blocked)
@@ -58,7 +90,7 @@ def test_a_dead_host_is_recorded_not_swallowed():
     checked and found nothing."""
 
     async def go():
-        f = Fetcher(user_agent="paytrace-live-test")
+        f = live_fetcher(user_agent="paytrace-live-test")
         try:
             r = await f.get(DEAD_HOST)
             return r, list(f.blocked)
@@ -75,7 +107,7 @@ def test_a_404_is_reported_with_its_status():
     """A response that arrives and is useless must not be skipped in silence."""
 
     async def go():
-        f = Fetcher(user_agent="paytrace-live-test")
+        f = live_fetcher(user_agent="paytrace-live-test")
         try:
             return await f.get(MISSING_URL)
         finally:
@@ -92,7 +124,7 @@ def test_the_client_closes_in_the_loop_that_opened_it():
     transports hold no connections, so every mocked test passed."""
 
     async def go():
-        f = Fetcher(user_agent="paytrace-live-test")
+        f = live_fetcher(user_agent="paytrace-live-test")
         try:
             await f.get(LIVE_URL)
         finally:
@@ -107,7 +139,7 @@ def test_repeated_fetches_reuse_one_client_without_error():
     across them is where real clients differ from mocks."""
 
     async def go():
-        f = Fetcher(user_agent="paytrace-live-test")
+        f = live_fetcher(user_agent="paytrace-live-test")
         try:
             return [await f.get(LIVE_URL) for _ in range(3)]
         finally:

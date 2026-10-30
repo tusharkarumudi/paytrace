@@ -282,8 +282,19 @@ class Fetcher:
                 # proxy resolves, so it is disabled and recorded rather than
                 # silently assumed -- see PinnedResolver.pins_enforced.
                 **({"verify": verify} if verify else {}),
+                # `verify` has to be handed to the TRANSPORT: once a custom
+                # transport is supplied, the client's own `verify` is not what
+                # builds the SSL context, so the bundle `_trust_store`
+                # deliberately selected was not being applied on this path.
+                # `trust_env=False` is restated for the same reason the client
+                # states it, though PinnedTransport now defaults to it: an
+                # `httpx.AsyncHTTPTransport` defaults to reading
+                # SSL_CERT_FILE / REQUESTS_CA_BUNDLE itself, which would let
+                # the environment add CA trust to a `direct` egress.
                 **({"proxy": proxy} if proxy
-                   else {"transport": PinnedTransport(self.pins)}),
+                   else {"transport": PinnedTransport(
+                       self.pins, trust_env=False,
+                       **({"verify": verify} if verify else {}))}),
             )
         return self._clients[egress.label]
 
@@ -313,9 +324,30 @@ class Fetcher:
             return ""
         for var in self._CA_VARS:
             path = os.environ.get(var, "").strip()
-            if path and Path(path).is_file():
-                self.tls_intercepted = var
-                return path
+            if not path:
+                continue
+            # Readable, not merely present. `is_file()` only stats, and the
+            # bundle is then OPENED by OpenSSL -- so a path we can stat but not
+            # read raised PermissionError out of `load_verify_locations`, which
+            # is client construction, so every retrieval died rather than one.
+            #
+            # Not hypothetical, and not exotic: this runs in sandboxes, which
+            # is the whole reason it exists, and a sandbox that exports
+            # SSL_CERT_FILE pointing into another user's home while the tool
+            # runs unprivileged produces exactly that. Found by running the
+            # suite as a non-root user.
+            #
+            # A bundle we cannot read is a bundle we do not have. Carry on with
+            # the system trust store: the proxy may still fail, but it fails as
+            # a TLS error on one host, which the run already reports, instead
+            # of an unhandled exception before the first request.
+            try:
+                with open(path, "rb"):
+                    pass
+            except OSError:
+                continue
+            self.tls_intercepted = var
+            return path
         return ""
 
     @property

@@ -72,9 +72,16 @@ class AdsTxtOwner(Collector):
 
             index = getattr(self, "index", None) or getattr(self.fetcher, "index", None)
 
+            # Both call sites below are guarded by `if index`, so this is only
+            # ever reached with an index present. It carried an `if _idx is
+            # None: return None` guard that could not run -- found by coverage,
+            # not by the unreachable-statement gate, which sees syntax rather
+            # than which branch a caller can take.
+            #
+            # `_idx=index` binds per iteration of the resource loop rather than
+            # closing over the name, so a later refactor that defers the call
+            # cannot silently pick up another resource's index.
             def holders(adsystem: str, seller_id: str, _idx=index) -> int | None:
-                if _idx is None:
-                    return None
                 return _idx.account_holders(adsystem, seller_id)
 
             assessed = key_accounts(ads, holders) if index else None
@@ -208,45 +215,43 @@ class SellersJson(Collector):
              "seller_type": rec.seller_type,
              "is_confidential": int(rec.is_confidential),
              **({"comment": rec.comment} if rec.comment else {}), **rec.extra}
-        if True:
-            if int(s.get("is_confidential", 0)) == 1:
-                # Publisher opted into confidentiality; type still tells us
-                # whether the inventory is owned or resold.
-                return [self.claim(
-                    ident, Predicate.SELLER_OF, str(s.get("seller_type", "")).upper(), url,
-                    reliability=Reliability.STRONG,
-                    correlation_group=f"sellers_json|{adsystem}|{seller_id}",
-                    raw={"is_confidential": 1},
-                )]
+        if int(s.get("is_confidential", 0)) == 1:
+            # Publisher opted into confidentiality; type still tells us
+            # whether the inventory is owned or resold.
+            return [self.claim(
+                ident, Predicate.SELLER_OF, str(s.get("seller_type", "")).upper(), url,
+                reliability=Reliability.STRONG,
+                correlation_group=f"sellers_json|{adsystem}|{seller_id}",
+                raw={"is_confidential": 1},
+            )]
 
-            group = f"sellers_json|{adsystem}|{seller_id}"
-            claims: list[Claim] = []
-            if rec.name:
-                # A seller name is frequently a natural person, not a company.
-                # Typing every one as an organization sends the investigation to
-                # corporate registries that will never hold a record.
-                kind = (IdKind.PERSON_NAME
-                        if rec.name_kind is SellerNameKind.NATURAL_PERSON
-                        else IdKind.ORG_NAME)
-                claims.append(self.claim(
-                    ident, Predicate.LEGAL_NAME,
-                    Identifier(kind, rec.name), url,
-                    reliability=Reliability.STRONG, correlation_group=group,
-                    raw={"seller_type": rec.seller_type,
-                         "name_kind": rec.name_kind.value,
-                         "declared_domain": rec.domain or None,
-                         "sole_operator_pattern": rec.sole_operator_pattern},
-                ))
-            if s.get("domain"):
-                claims.append(self.claim(
-                    ident, Predicate.OPERATES,
-                    Identifier(IdKind.DOMAIN, s["domain"]), url,
-                    reliability=Reliability.STRONG, correlation_group=group,
-                ))
-            # Parent-object contact fields describe the ad system, not the
-            # seller -- deliberately not emitted as seller evidence.
-            return claims
-        return []
+        group = f"sellers_json|{adsystem}|{seller_id}"
+        claims: list[Claim] = []
+        if rec.name:
+            # A seller name is frequently a natural person, not a company.
+            # Typing every one as an organization sends the investigation to
+            # corporate registries that will never hold a record.
+            kind = (IdKind.PERSON_NAME
+                    if rec.name_kind is SellerNameKind.NATURAL_PERSON
+                    else IdKind.ORG_NAME)
+            claims.append(self.claim(
+                ident, Predicate.LEGAL_NAME,
+                Identifier(kind, rec.name), url,
+                reliability=Reliability.STRONG, correlation_group=group,
+                raw={"seller_type": rec.seller_type,
+                     "name_kind": rec.name_kind.value,
+                     "declared_domain": rec.domain or None,
+                     "sole_operator_pattern": rec.sole_operator_pattern},
+            ))
+        if s.get("domain"):
+            claims.append(self.claim(
+                ident, Predicate.OPERATES,
+                Identifier(IdKind.DOMAIN, s["domain"]), url,
+                reliability=Reliability.STRONG, correlation_group=group,
+            ))
+        # Parent-object contact fields describe the ad system, not the
+        # seller -- deliberately not emitted as seller evidence.
+        return claims
 
 
 # --------------------------------------------------------------------------- #

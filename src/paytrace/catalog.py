@@ -168,12 +168,20 @@ def coverage_report() -> str:
     ]
     for category in sorted({r.category for r in cat}):
         lines += [f"## {category.replace('_', ' ').title()}", "",
-                  "| Jurisdiction | Registry | Access | Status | Yields |",
-                  "|---|---|---|---|---|"]
+                  "| Jurisdiction | Registry | Scope | Access | Status | Yields |",
+                  "|---|---|---|---|---|---|"]
+        # Scope is in the table because without it the status column misleads.
+        # China sorts CNINFO above NECIPS, so the first CN row a skim-reader
+        # meets reads "CN ... implemented" -- and CNINFO covers listed
+        # companies only, a tiny fraction of the register. The field already
+        # said "listed companies only"; it just was not shown.
         for r in sorted(query(category=category), key=lambda x: (x.jurisdiction, x.name)):
+            scope = r.scope or "—"
+            if r.requires_local_egress:
+                scope += " (needs in-country egress)"
             lines.append(
-                f"| {r.jurisdiction} | {r.name} | `{r.access}` | {r.status} | "
-                f"{', '.join(r.yields[:4]) or '—'} |"
+                f"| {r.jurisdiction} | {r.name} | {scope} | `{r.access}` | "
+                f"{r.status} | {', '.join(r.yields[:4]) or '—'} |"
             )
         lines.append("")
     return "\n".join(lines)

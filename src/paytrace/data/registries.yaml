@@ -186,10 +186,83 @@ corporate:
   - jurisdiction: HK
     name: Companies Registry ICRIS
     scope: national
+    url: https://www.icris.cr.gov.hk
     access: manual
     automatable: false
     yields: [cr_number, directors, address]
     notes: "Paid-per-search. Directors were briefly restricted then partly restored."
+
+  - jurisdiction: HK
+    name: Companies Registry open data (data.gov.hk)
+    scope: new incorporations, registrations, re-domiciliations and name changes from 2024-12-30
+    url: https://data.gov.hk/en-datasets/provider/hk-cr
+    access: bulk
+    automatable: true
+    licence: "unspecified — data.gov.hk returns a null licence for this dataset"
+    yields: [legal_name, legal_name_zh, br_number, incorporation_date, name_change_date]
+    notes: >
+      Free weekly CSV and XLS, and the only open-data route into the Hong Kong
+      register — ICRIS above is paid-per-search. It is NOT the register, and
+      four things follow from that. It is an incremental feed beginning
+      2024-12-30, so absence means only "not newly registered or renamed inside
+      the covered window", never that a company does not exist. The identifier
+      is the BR number issued by the Inland Revenue Department, not the CR
+      number ICRIS is keyed on, so the two do not join directly. A name change
+      is given as a DATE with no previous name: recovering what the company was
+      called before means diffing consecutive weekly files and keeping them.
+      And there are no directors and no addresses in it at all. What it is good
+      for is dating an incorporation or a rename, and the Chinese name beside
+      the English one. The Companies Registry's other three data.gov.hk
+      datasets are monthly aggregate counts with no entity-level rows.
+
+  - jurisdiction: CN
+    name: NECIPS (National Enterprise Credit Information Publicity System)
+    scope: national
+    url: https://www.gsxt.gov.cn
+    access: manual
+    automatable: false
+    requires_local_egress: true
+    language: zh-Hans
+    yields: [uscc, legal_name, legal_representative, shareholders,
+             registered_address, registered_capital, status, penalties]
+    notes: >
+      国家企业信用信息公示系统, run by SAMR: the authoritative register for
+      mainland China, covering upwards of 180 million market entities, keyed on
+      the 18-character Unified Social Credit Code. Free name or USCC search,
+      and no public API.
+
+      Four barriers, each of which has to be stated rather than discovered.
+      Real-name authentication has been mandatory since November 2021 and wants
+      a mainland national ID or mobile number. Most non-mainland addresses are
+      blocked or time out, so this is not reachable from an ordinary analyst
+      vantage point. The interface is Simplified Chinese only. And the
+      disclosure is first-tier shareholders with no natural-person beneficial
+      owner, while annual-report fields are self-reported and are published
+      without SAMR verifying them.
+
+      The practical consequence: for any unlisted mainland company this is the
+      register that matters and the toolkit cannot query it, so an absence
+      anywhere else in this catalogue is not an absence in China. Enforcement
+      flags (经营异常, revoked, dishonest-debtor) are real signal when a lookup
+      can be made by hand.
+
+  - jurisdiction: CN
+    name: CNINFO (Shanghai and Shenzhen mandated disclosure)
+    scope: listed companies only
+    url: https://www.cninfo.com.cn
+    access: api_open
+    automatable: true
+    collector: cninfo_disclosure
+    language: zh-Hans
+    yields: [stock_code, legal_name, shareholder_structure, annual_reports,
+             related_party_transactions]
+    notes: >
+      The analogue of EDGAR and the right first stop when a payment chain
+      reaches a Chinese company — but listed companies only, which is a tiny
+      fraction of the 180 million entities in NECIPS above. An absence here
+      means almost nothing: it is the expected result for virtually every
+      private company. Listed in this catalogue so that a coverage report
+      cannot show China as covered on the strength of it.
 
   - jurisdiction: KY
     name: Cayman Islands General Registry

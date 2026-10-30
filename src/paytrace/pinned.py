@@ -110,6 +110,16 @@ class PinnedTransport(httpx.AsyncHTTPTransport):
     """
 
     def __init__(self, pins: PinnedResolver, **kwargs) -> None:
+        # `trust_env=False` by default, because httpx's transport defaults to
+        # True and builds its SSL context from SSL_CERT_FILE /
+        # REQUESTS_CA_BUNDLE. The client above this sets `trust_env=False` and
+        # says why -- a declared egress must not pick up ambient settings --
+        # but that does not reach a transport constructed separately, so a
+        # `direct` egress was taking CA trust from whatever set the variable.
+        # The default lives here so that constructing the transport bare, as
+        # tests and any future caller do, cannot reopen it; a caller that
+        # really wants environment trust still passes trust_env=True.
+        kwargs.setdefault("trust_env", False)
         super().__init__(**kwargs)
         self._pins = pins
         pool = getattr(self, "_pool", None)

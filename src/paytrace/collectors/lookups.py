@@ -247,9 +247,21 @@ class CninfoDisclosure(Collector):
     shareholder structure, related-party transactions. The analogue of EDGAR,
     and the right first stop when a chain reaches a Chinese company.
 
-    Coverage is limited to *listed* companies. The overwhelming majority of
-    Chinese entities are unlisted and appear only in provincial AMR registries,
-    which are not openly queryable — so an absence here says very little.
+    Coverage is limited to *listed* companies, which is a tiny fraction of the
+    roughly 180 million registered mainland entities — so an absence here is the
+    expected result for virtually every private company and says almost nothing.
+
+    The register that does cover them is NECIPS (gsxt.gov.cn), run by SAMR and
+    keyed on the 18-character Unified Social Credit Code. This docstring used to
+    say unlisted entities "appear only in provincial AMR registries, which are
+    not openly queryable", which pointed the reader at the wrong thing twice:
+    NECIPS is the national publication layer over that provincial AMR data, and
+    it IS publicly searchable by name or USCC, for free. What stops the toolkit
+    using it is narrower and more specific — real-name authentication with a
+    mainland ID or mobile number since November 2021, non-mainland addresses
+    largely blocked, and Simplified Chinese only — and it is recorded in the
+    registry catalogue rather than buried here, so a coverage report can state
+    that the register was never reached.
     """
 
     name = "cninfo_disclosure"

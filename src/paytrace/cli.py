@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 from attribution_graph import (
@@ -117,7 +118,23 @@ def _registries(args: argparse.Namespace) -> int:
         if r.yields:
             print(f"       yields: {', '.join(r.yields)}")
         if r.notes:
-            print(f"       note: {r.notes.splitlines()[0]}")
+            # Every paragraph, wrapped -- not `splitlines()[0]`.
+            #
+            # These notes carry the caveats that stop a reader misreading
+            # coverage: which identifier a register is keyed on, that absence
+            # from it means nothing, that it cannot be reached from outside the
+            # jurisdiction at all. Printing the first paragraph and dropping
+            # the rest discarded exactly those: the NECIPS entry states four
+            # access barriers and showed one, so the output read as "free name
+            # search, no API" and omitted that the register is unreachable from
+            # an ordinary vantage point.
+            paras = [" ".join(x.split())
+                     for x in r.notes.split("\n\n") if x.strip()]
+            for i, para in enumerate(paras):
+                lines = textwrap.wrap(para, width=92)
+                for j, line in enumerate(lines):
+                    lead = "       note: " if (i == 0 and j == 0) else "       "
+                    print(f"{lead}{line}")
         print()
     return 0
 

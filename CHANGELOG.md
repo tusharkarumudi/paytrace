@@ -6,6 +6,217 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.27] - 2026-10-29
+
+### Environment CA trust reached a `direct` egress
+
+Running the suite as a non-root user -- prompted by a PermissionError report
+from a real machine -- turned up a security-relevant inconsistency that passes
+unnoticed as root, because as root every file is readable.
+
+`Fetcher` builds its client with `trust_env=False` and a comment explaining
+why: a declared egress must not pick up ambient environment settings, or
+whatever set the variable chooses the route. But the transport under it was
+constructed as `PinnedTransport(self.pins)`, with no arguments -- and
+`httpx.AsyncHTTPTransport` defaults to `trust_env=True` and builds its SSL
+context from SSL_CERT_FILE / REQUESTS_CA_BUNDLE itself. So on the pinned
+(non-proxy) path the environment could add CA trust to a `direct` connection:
+precisely what `_trust_store` refuses to allow, and it refuses it in a
+docstring that says so in as many words.
+
+The same construction had a second consequence in the other direction. Once a
+custom transport is supplied, the client's `verify` is not what builds the SSL
+context -- so for an `environment` egress without a proxy, the bundle
+`_trust_store` had deliberately selected was never applied.
+
+- `PinnedTransport` now defaults to `trust_env=False`, with the default in the
+  class rather than at the one call site: tests construct it bare and so would
+  the next caller, and an invariant that holds only where somebody remembered
+  to restate it is not an invariant. An explicit caller can still opt in.
+- `Fetcher` passes the selected bundle to the transport, where it takes effect.
+- **An unreadable CA bundle is treated as absent.** `_trust_store` checked
+  `is_file()`, which only stats, and the bundle is then *opened* by OpenSSL --
+  so a path that could be stat'd but not read raised PermissionError out of
+  `load_verify_locations`, which happens during client construction, killing
+  every retrieval in the run rather than one host. This code exists for
+  sandboxes, and a sandbox that exports SSL_CERT_FILE pointing into another
+  user's home while the tool runs unprivileged produces exactly that. A bundle
+  we cannot read is a bundle we do not have; the run continues on the system
+  trust store, and any resulting failure surfaces as a TLS error on one host,
+  which the run already reports.
+
+Verified by running all four suites as a non-root user as well as as root. The
+unreadable-bundle test skips under root, where `chmod` cannot deny the owner,
+and runs unprivileged.
+
+### China and Hong Kong were not being checked
+
+Two sources were raised and neither was covered.
+
+**China was absent from the registry catalogue entirely.** Not
+under-documented -- absent. `attribution registries --jurisdiction CN` returned
+nothing, so a coverage report could say nothing at all about mainland China,
+and `cninfo_disclosure` -- a collector this package *implements* -- was
+invisible to the map while being live in runs. NECIPS
+(国家企业信用信息公示系统, gsxt.gov.cn, run by SAMR) is the authoritative
+register for upwards of 180 million mainland entities, keyed on the 18-character
+Unified Social Credit Code, and it was nowhere.
+
+Worse, the `CninfoDisclosure` docstring actively pointed away from it: it said
+unlisted entities "appear only in provincial AMR registries, which are not
+openly queryable". That is wrong twice. NECIPS *is* the national publication
+layer over that provincial AMR data, and it *is* freely searchable by name or
+USCC. The real obstacles are narrower and more specific -- real-name
+authentication with a mainland ID or mobile number since November 2021, most
+non-mainland addresses blocked, Simplified Chinese only, first-tier
+shareholders with no natural-person beneficial owner, and annual-report fields
+published self-reported without SAMR verifying them. A reader following that
+docstring would have stopped looking for the wrong reason.
+
+Both CN entries are now in the catalogue: NECIPS as `manual`, flagged
+`requires_local_egress` and `zh-Hans`, carrying each barrier; and CNINFO as
+`implemented` with `scope: listed companies only` and a note that an absence in
+it is the expected result for virtually every private company. The point is
+that a coverage report cannot now show China as covered on the strength of a
+listed-company lookup.
+
+**Hong Kong listed only the paid route.** ICRIS is paid-per-search and was the
+sole HK row, which understates what can be checked without a budget: the
+Companies Registry publishes on data.gov.hk for free. But of its four datasets
+only one carries entity-level rows, and reading the published file rather than
+assuming turned up two things that would have been wrong:
+
+- the identifier is the **BR number** issued by the Inland Revenue Department,
+  not the CR number ICRIS is keyed on, so the two do not join directly; and
+- a name change is given as a **date with no previous name**, so recovering
+  what a company was called before means diffing consecutive weekly files and
+  keeping them.
+
+It is also an incremental feed beginning 2024-12-30 with no directors and no
+addresses, so absence from it means only "not newly registered or renamed
+inside the covered window". All of that travels with the entry, which is
+`bulk` / `automatable, not implemented` rather than claimed as working. Its
+licence is recorded as unspecified because data.gov.hk returns a null licence
+for the dataset, and inventing one would be worse than saying so.
+
+**And the listing was hiding the caveats it stored.** `registries` printed
+`notes.splitlines()[0]` and dropped every later paragraph, so the NECIPS entry
+stated four access barriers and showed one: the output read as "free name
+search, no public API" and omitted that the register is unreachable from an
+ordinary vantage point. A caveat recorded, stored, tested -- and then not shown
+to the person it was written for. The listing now wraps and prints every
+paragraph.
+
+### The dead `if True:` in the payee pivot, and why it survived
+
+`SellersJson.collect` wrapped its entire body in `if True:`, which made the
+`return []` after it unreachable. No behaviour depended on either -- removing
+them changes nothing a caller can observe -- but the reason they lasted is
+worth more than the fix:
+
+**`SellersJson.collect` had no test coverage at all.** Not thin coverage: the
+whole body, every line of it, never executed under the suite. This is
+`priority = 1`, the highest-selectivity business pivot in the toolkit -- the
+step that turns `adsystem/seller_id` into the name of whoever gets paid, and
+the step a real investigation of an obscure domain comes down to. Nothing
+exercised it, so dead scaffolding inside it was invisible.
+
+So the order of work was tests first:
+
+- **Ten new tests for `SellersJson.collect`**, written and passing against the
+  *old* code, which is what makes the removal provably behaviour-preserving
+  rather than probably. They cover an identifier with no `/`, an unresolvable
+  seller, the confidential branch (type only, and the withheld name absent from
+  the claim), an organisation name with its domain, a natural-person name typed
+  as `PERSON_NAME` rather than sent to corporate registries that will never
+  hold it, a record with a domain and no name, an empty record, the single
+  correlation group that stops two facts from one document corroborating each
+  other, and the parent-object `contact_email`/`contact_address` fields that
+  describe the **ad system** and must never be emitted as seller evidence.
+- **Then** the `if True:` and the unreachable `return []` came out. All ten
+  tests still pass, unchanged.
+- **A repo-wide gate for unreachable statements.** `ruff` has no rule for this
+  and `bandit` does not look. The reachability gate added in 2.0.24 finds
+  unused *definitions*; unreachable *statements* are a different question and
+  nothing was asking it. The new check walks every module and fails on a branch
+  with a constant condition or any statement after one that always leaves the
+  frame. A census across all four packages found exactly one site -- this one.
+- A structural guard on `collect` itself: its return count and the absence of
+  constant-condition branches are asserted, so the wrapper cannot come back and
+  a new branch cannot inherit coverage from the old tests.
+
+### All six collectors, not just the one being changed
+
+The audit above found the same hole in five more: of the six network-touching
+collectors in `collectors/business.py`, only `ads_txt_owner` had its `collect`
+covered. These are where the toolkit's judgment lives -- each one decides what
+a document is allowed to mean, and every one of those decisions was made in
+response to a specific wrong answer. Untested, they were a comment that
+happened to compile.
+
+`collectors/business.py` now runs at **100%**, from 39%. Of the 48 new tests,
+the ones that pin a decision rather than a mechanism:
+
+- **GLEIF rejects a partial name match.** `filter[entity.legalName]` is a
+  partial match: asking for a company returns anything containing part of its
+  name -- a French firm literally named "LLC", an "Example Court, LLC LLC" --
+  and each was once accepted as a claim and resolved as an entity of the case.
+  Also: a bare legal suffix is never searched for, an LEI is fetched directly
+  rather than searched, `registeredAs` is withheld unless a jurisdiction scopes
+  it, and direct- and ultimate-parent get their own correlation groups while
+  the four fields of one record share one, so a register entry cannot
+  corroborate itself.
+- **The imprint collector does not read a name out of a disclaimer.** A viewer
+  site's terms page says "not affiliated with ... Inc." precisely to deny the
+  connection; reading the name out of that sentence reported the denial as
+  evidence of the relationship, which is the worst inversion this collector can
+  produce. Tested in both directions: the denial yields nothing, and an
+  operator's own disclosure on the same page is still read. Also covered: page
+  furniture ("Name Email Message Inc" out of a contact form), a tag as a
+  boundary rather than a space, stopping at the first page that yields
+  structure instead of hammering all ten paths, and that the email pattern does
+  not backtrack catastrophically on a crafted 8 KB run -- a page the subject
+  controls, so a slow pattern is a denial of service against the analyst.
+- **Companies House excludes a resigned officer.** Reported as current, it
+  names someone as responsible for a company they left, which is the kind of
+  error that reaches a real person. Also: no key means no request rather than
+  an unauthenticated one, a `de/HRB…` number is refused instead of being
+  collided with a UK company sharing the digits, and a corporate PSC is typed
+  `ORG_NAME` rather than `PERSON_NAME`.
+- **EDGAR marks a former name as former.** Emitted indistinguishably from the
+  current name, it reads as an alias in use now -- which is how a renamed
+  company gets reported under a name it has not used for years. Also: two
+  spellings of one CIK resolve to one node rather than splitting a filer's facts
+  across two, and a website becomes a bare domain so it can join to ads.txt
+  evidence keyed on one.
+- **yente discards a weak fuzzy match.** A 0.4 score on a company name is a
+  different company, and emitted as `SAME_AS` it merges two unrelated entities
+  into one node. An LEI is banded above a name alias, and one result's
+  contribution is capped, so an entity with forty aliases cannot dominate.
+- **`MANAGERDOMAIN=bcn.group, DE`** yields the domain, not the whole string.
+  The IAB spec allows a country suffix; the earlier fix for it had no test at
+  the collector layer.
+- **A widely duplicated account is demoted and labelled, not dropped**, and the
+  file summary that explains why a large file produced few leads is recorded at
+  zero weight as context about the document rather than evidence about the
+  operator.
+- **A malformed register date does not end the run.** A `ValueError` out of
+  date parsing would abort the collector and lose every claim gathered before
+  it.
+
+Each of these was verified by planting the defect it describes and confirming
+the test fails. Two did not, and were rewritten: one "page furniture" test
+passed with the furniture guard removed, because the tag-boundary rule rejected
+the candidate first and the guard was never reached; one CIK test asserted a
+request URL that is padded again when it is formatted, so it could not see the
+normalisation it claimed to check. A test that passes on the broken code is
+worse than no test, because it is counted as coverage.
+
+One more unreachable line fell out of this: `AdsTxtOwner`'s `holders` closure
+guarded against an index that cannot be absent, since both call sites are
+inside `if index`. Coverage found it; the unreachable-statement gate could not,
+because it reads syntax rather than which branch a caller can reach.
+
 ## [2.0.26] - 2026-10-27
 
 Everything else in this release was published as 2.0.25. These changes landed
